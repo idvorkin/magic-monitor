@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useFlashDetector } from '../hooks/useFlashDetector';
 import { useTimeMachine } from '../hooks/useTimeMachine';
+import { useSmartZoom } from '../hooks/useSmartZoom';
 import { Thumbnail } from './Thumbnail';
 
 export function CameraStage() {
@@ -21,6 +22,22 @@ export function CameraStage() {
     const [threshold, setThreshold] = useState(20);
     const [isPickingColor, setIsPickingColor] = useState(false);
     const [isHQ, setIsHQ] = useState(false);
+    const [isSmartZoom, setIsSmartZoom] = useState(false);
+
+    // Smart Zoom
+    const smartZoom = useSmartZoom({
+        videoRef,
+        enabled: isSmartZoom,
+        smoothFactor: 0.05
+    });
+
+    // Effect to apply smart zoom values
+    useEffect(() => {
+        if (isSmartZoom) {
+            setZoom(smartZoom.zoom);
+            setPan(smartZoom.pan);
+        }
+    }, [isSmartZoom, smartZoom.zoom, smartZoom.pan]);
 
     // Time Machine State
     // We always enable recording in the background for "Instant Replay" capability
@@ -298,6 +315,16 @@ export function CameraStage() {
                             title="High Quality Mode (Uses ~3.5GB RAM)"
                         >
                             {isHQ ? 'HQ' : 'LQ'}
+                        </button>
+
+                        <div className="h-8 w-px bg-white/20 mx-2" />
+
+                        <button
+                            onClick={() => setIsSmartZoom(!isSmartZoom)}
+                            className={`px-3 py-1 rounded font-bold transition-colors text-sm ${isSmartZoom ? 'bg-green-600 text-white' : 'bg-white/10 text-gray-400'}`}
+                            disabled={smartZoom.isModelLoading}
+                        >
+                            {smartZoom.isModelLoading ? '⏳' : (isSmartZoom ? 'AUTO' : 'MANUAL')}
                         </button>
                     </div>
                 )}
