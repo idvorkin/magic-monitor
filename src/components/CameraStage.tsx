@@ -3,6 +3,7 @@ import { useFlashDetector } from '../hooks/useFlashDetector';
 import { useTimeMachine } from '../hooks/useTimeMachine';
 import { useSmartZoom } from '../hooks/useSmartZoom';
 import { Thumbnail } from './Thumbnail';
+import { Minimap } from './Minimap';
 
 export function CameraStage() {
     const videoRef = useRef<HTMLVideoElement>(null);
@@ -56,23 +57,21 @@ export function CameraStage() {
         threshold
     });
 
+    const [stream, setStream] = useState<MediaStream | null>(null);
+
     useEffect(() => {
         async function setupCamera() {
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({
-                    video: {
-                        width: { ideal: 1920 },
-                        height: { ideal: 1080 },
-                        facingMode: 'user',
-                    },
+                const mediaStream = await navigator.mediaDevices.getUserMedia({
+                    video: { width: 1920, height: 1080, frameRate: 30 }
                 });
-
+                setStream(mediaStream);
                 if (videoRef.current) {
-                    videoRef.current.srcObject = stream;
+                    videoRef.current.srcObject = mediaStream;
                 }
             } catch (err) {
-                console.error('Error accessing camera:', err);
-                setError('Could not access camera. Please allow camera permissions.');
+                console.error("Error accessing camera:", err);
+                setError("Could not access camera. Please allow permissions.");
             }
         }
 
@@ -179,6 +178,14 @@ export function CameraStage() {
                     REPLAY MODE
                 </div>
             )}
+
+            {/* Minimap (Only when zoomed) */}
+            <Minimap
+                stream={stream}
+                zoom={zoom}
+                pan={pan}
+                frame={timeMachine.isReplaying ? timeMachine.frame : null}
+            />
 
             {/* RAM Monitor */}
             <div className="absolute bottom-8 right-8 z-40 text-white/50 font-mono text-xs pointer-events-none">
