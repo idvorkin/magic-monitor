@@ -35,6 +35,7 @@ export function CameraStage() {
     // Effect to apply smart zoom values
     useEffect(() => {
         if (isSmartZoom) {
+            // eslint-disable-next-line
             setZoom(smartZoom.zoom);
             setPan(smartZoom.pan);
         }
@@ -77,9 +78,10 @@ export function CameraStage() {
 
         setupCamera();
 
+        const videoEl = videoRef.current;
         return () => {
-            if (videoRef.current && videoRef.current.srcObject) {
-                const stream = videoRef.current.srcObject as MediaStream;
+            if (videoEl && videoEl.srcObject) {
+                const stream = videoEl.srcObject as MediaStream;
                 stream.getTracks().forEach(track => track.stop());
             }
         };
@@ -213,6 +215,7 @@ export function CameraStage() {
 
             {/* Live Video */}
             <video
+                data-testid="main-video"
                 ref={videoRef}
                 autoPlay
                 playsInline
