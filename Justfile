@@ -11,6 +11,10 @@ dev:
 build:
     npm run build
 
+# Run unit tests
+test:
+    npm run test
+
 # Deploy to Surge
-deploy: build
+deploy: test build
     npx surge dist magic-monitor.surge.sh
