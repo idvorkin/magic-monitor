@@ -182,6 +182,24 @@ export function CameraStage() {
 				className={`absolute inset-0 border-[20px] border-red-600 z-40 pointer-events-none transition-opacity duration-100 ${isFlashing ? "opacity-100" : "opacity-0"}`}
 			/>
 
+			{/* Pan Boundary Debug Overlay (see docs/SMART_ZOOM_SPEC.md) */}
+			{isSmartZoom && (
+				<>
+					<div
+						className={`absolute left-0 top-0 bottom-0 w-2 bg-red-500 z-40 pointer-events-none transition-opacity duration-150 ${smartZoom.clampedEdges.left ? "opacity-100" : "opacity-0"}`}
+					/>
+					<div
+						className={`absolute right-0 top-0 bottom-0 w-2 bg-red-500 z-40 pointer-events-none transition-opacity duration-150 ${smartZoom.clampedEdges.right ? "opacity-100" : "opacity-0"}`}
+					/>
+					<div
+						className={`absolute top-0 left-0 right-0 h-2 bg-red-500 z-40 pointer-events-none transition-opacity duration-150 ${smartZoom.clampedEdges.top ? "opacity-100" : "opacity-0"}`}
+					/>
+					<div
+						className={`absolute bottom-0 left-0 right-0 h-2 bg-red-500 z-40 pointer-events-none transition-opacity duration-150 ${smartZoom.clampedEdges.bottom ? "opacity-100" : "opacity-0"}`}
+					/>
+				</>
+			)}
+
 			{/* GitHub Link */}
 			<a
 				href="https://github.com/idvorkin/magic-monitor"

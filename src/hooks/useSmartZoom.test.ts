@@ -1,6 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useSmartZoom } from "./useSmartZoom";
+import { clampPanToViewport, useSmartZoom } from "./useSmartZoom";
 
 // Mock MediaPipe
 const mockDetectForVideo = vi.fn();
@@ -158,7 +158,8 @@ describe("useSmartZoom", () => {
 		expect(result.current.zoom).toBe(initialZoom);
 	});
 
-	it("should respond to large changes", async () => {
+	it("should respond to large changes (clamped to MAX_ZOOM=2)", async () => {
+		// See docs/SMART_ZOOM_SPEC.md for constants
 		const { result } = renderHook(() =>
 			useSmartZoom({
 				videoRef: { current: videoElement },
@@ -171,33 +172,95 @@ describe("useSmartZoom", () => {
 			await Promise.resolve();
 		});
 
-		// 1. Initial Target 2.0
+		// 1. Initial: Box 0.5 -> Target 1.0 (at edge of zoom)
 		const landmarks1 = [
 			[
-				{ x: 0.375, y: 0.375, z: 0 },
-				{ x: 0.625, y: 0.625, z: 0 },
+				{ x: 0.25, y: 0.25, z: 0 },
+				{ x: 0.75, y: 0.75, z: 0 },
 			],
 		];
 		mockDetectForVideo.mockReturnValue({ landmarks: landmarks1 });
 		advanceFrame();
 
 		const initialZoom = result.current.zoom;
+		expect(initialZoom).toBeCloseTo(1.0, 1);
 
-		// 2. Large Change
-		// Target 3.0. Delta 1.0 > Threshold 0.1
-		// 1 / (size * 2) = 3.0 => size = 1/6 = 0.166
+		// 2. Large Change: Box 0.25 -> Target 2.0
+		// Delta 1.0 > ZOOM_THRESHOLD (0.1), so should commit
 		const landmarks2 = [
 			[
-				{ x: 0.41, y: 0.41, z: 0 },
-				{ x: 0.58, y: 0.58, z: 0 },
+				{ x: 0.375, y: 0.375, z: 0 },
+				{ x: 0.625, y: 0.625, z: 0 },
 			],
 		];
 		mockDetectForVideo.mockReturnValue({ landmarks: landmarks2 });
 		advanceFrame();
 
-		// Should change
+		// Should change to MAX_ZOOM (2.0)
 		expect(mockDetectForVideo).toHaveBeenCalled();
 		expect(result.current.zoom).not.toBe(initialZoom);
-		expect(result.current.zoom).toBeCloseTo(2.9, 1);
+		expect(result.current.zoom).toBeCloseTo(2.0, 1);
+	});
+});
+
+// Pure function tests (see docs/SMART_ZOOM_SPEC.md - Viewport Bounds Constraint)
+describe("clampPanToViewport", () => {
+	const videoSize = { width: 1920, height: 1080 };
+
+	it("should allow no pan at zoom 1 (spec: maxPan = 0)", () => {
+		// Positive input pan → clamped to 0, hit left/top boundaries
+		const result = clampPanToViewport({ x: 100, y: 50 }, 1, videoSize);
+
+		expect(result.pan.x).toBe(0);
+		expect(result.pan.y).toBe(0);
+		// Positive pan was clamped → hit left (positive direction) and top
+		expect(result.clampedEdges.left).toBe(true);
+		expect(result.clampedEdges.top).toBe(true);
+		// Wasn't trying to go right or bottom
+		expect(result.clampedEdges.right).toBe(false);
+		expect(result.clampedEdges.bottom).toBe(false);
+	});
+
+	it("should allow pan up to 480px at zoom 2 (spec: maxPanX = 480)", () => {
+		// At zoom 2: maxPanX = 1920 * (1 - 1/2) / 2 = 1920 * 0.5 / 2 = 480
+		const result = clampPanToViewport({ x: 400, y: 200 }, 2, videoSize);
+
+		expect(result.pan.x).toBe(400); // Within bounds
+		expect(result.pan.y).toBe(200); // Within bounds
+		expect(result.clampedEdges.left).toBe(false);
+		expect(result.clampedEdges.right).toBe(false);
+	});
+
+	it("should clamp pan at boundary and set clampedEdges (spec example)", () => {
+		// At zoom 2: maxPanX = 480, maxPanY = 270
+		const result = clampPanToViewport({ x: 600, y: -300 }, 2, videoSize);
+
+		expect(result.pan.x).toBe(480); // Clamped to max
+		expect(result.pan.y).toBe(-270); // Clamped to -max
+		expect(result.clampedEdges.left).toBe(true); // At +maxPanX
+		expect(result.clampedEdges.right).toBe(false);
+		expect(result.clampedEdges.top).toBe(false);
+		expect(result.clampedEdges.bottom).toBe(true); // At -maxPanY
+	});
+
+	it("should allow pan up to 640px at zoom 3 (spec: maxPanX = 640)", () => {
+		// At zoom 3: maxPanX = 1920 * (1 - 1/3) / 2 = 1920 * (2/3) / 2 = 640
+		// Test exceeding boundary to trigger clamping
+		const result = clampPanToViewport({ x: 700, y: 400 }, 3, videoSize);
+
+		expect(result.pan.x).toBeCloseTo(640, 0); // Clamped to max
+		expect(result.pan.y).toBeCloseTo(360, 0); // Clamped to max
+		expect(result.clampedEdges.left).toBe(true);
+		expect(result.clampedEdges.top).toBe(true);
+	});
+
+	it("should handle negative pan values", () => {
+		// At zoom 2: maxPan = 480, 270
+		const result = clampPanToViewport({ x: -500, y: -100 }, 2, videoSize);
+
+		expect(result.pan.x).toBe(-480); // Clamped
+		expect(result.pan.y).toBe(-100); // Within bounds
+		expect(result.clampedEdges.right).toBe(true); // At -maxPanX
+		expect(result.clampedEdges.left).toBe(false);
 	});
 });

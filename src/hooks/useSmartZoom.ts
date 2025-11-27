@@ -1,6 +1,39 @@
 import { FilesetResolver, HandLandmarker } from "@mediapipe/tasks-vision";
 import { useEffect, useRef, useState } from "react";
 
+// Clamped edges indicator for debug overlay (see docs/SMART_ZOOM_SPEC.md)
+export interface ClampedEdges {
+	left: boolean;
+	right: boolean;
+	top: boolean;
+	bottom: boolean;
+}
+
+// Pure function: Clamp pan to viewport bounds (see docs/SMART_ZOOM_SPEC.md)
+export function clampPanToViewport(
+	pan: { x: number; y: number },
+	zoom: number,
+	videoSize: { width: number; height: number },
+): { pan: { x: number; y: number }; clampedEdges: ClampedEdges } {
+	// maxPan = videoSize × (1 - 1/zoom) / 2
+	const maxPanX = (videoSize.width * (1 - 1 / zoom)) / 2;
+	const maxPanY = (videoSize.height * (1 - 1 / zoom)) / 2;
+
+	const clampedEdges: ClampedEdges = {
+		left: pan.x >= maxPanX,
+		right: pan.x <= -maxPanX,
+		top: pan.y >= maxPanY,
+		bottom: pan.y <= -maxPanY,
+	};
+
+	const clampedPan = {
+		x: Math.min(Math.max(pan.x, -maxPanX), maxPanX),
+		y: Math.min(Math.max(pan.y, -maxPanY), maxPanY),
+	};
+
+	return { pan: clampedPan, clampedEdges };
+}
+
 interface SmartZoomConfig {
 	videoRef: React.RefObject<HTMLVideoElement | null>;
 	enabled: boolean;
@@ -24,13 +57,21 @@ export function useSmartZoom({
 	// Committed target state (for hysteresis/deadband)
 	const committedTargetRef = useRef({ zoom: 1, pan: { x: 0, y: 0 } });
 
-	// Thresholds
+	// Constants (see docs/SMART_ZOOM_SPEC.md)
+	const MIN_ZOOM = 1;
+	const MAX_ZOOM = 3;
 	const ZOOM_THRESHOLD = 0.1;
 	const PAN_THRESHOLD = 50;
 
 	// Output state
 	const [zoom, setZoom] = useState(1);
 	const [pan, setPan] = useState({ x: 0, y: 0 });
+	const [clampedEdges, setClampedEdges] = useState<ClampedEdges>({
+		left: false,
+		right: false,
+		top: false,
+		bottom: false,
+	});
 
 	const landmarkerRef = useRef<HandLandmarker | null>(null);
 	const requestRef = useRef<number>(0);
@@ -110,8 +151,8 @@ export function useSmartZoom({
 					const maxDim = Math.max(width, height);
 					let targetZoom = 1 / (maxDim * padding);
 
-					// Clamp zoom
-					targetZoom = Math.min(Math.max(targetZoom, 1), 5);
+					// Clamp zoom (see docs/SMART_ZOOM_SPEC.md)
+					targetZoom = Math.min(Math.max(targetZoom, MIN_ZOOM), MAX_ZOOM);
 
 					// Determine target pan
 					// Pan is offset from center.
@@ -174,8 +215,17 @@ export function useSmartZoom({
 						(committedTargetRef.current.pan.y - currentPanRef.current.y) *
 							smoothFactor;
 
+					// Clamp pan to viewport bounds (see docs/SMART_ZOOM_SPEC.md)
+					const { pan: clampedPan, clampedEdges: edges } = clampPanToViewport(
+						currentPanRef.current,
+						currentZoomRef.current,
+						{ width: video.videoWidth, height: video.videoHeight },
+					);
+					currentPanRef.current = clampedPan;
+
 					setZoom(currentZoomRef.current);
 					setPan({ ...currentPanRef.current });
+					setClampedEdges(edges);
 					setDebugLandmarks(result.landmarks);
 				} else {
 					// No hands? Slowly zoom out to 1
@@ -192,8 +242,17 @@ export function useSmartZoom({
 						currentPanRef.current.y +
 						(0 - currentPanRef.current.y) * (smoothFactor * 0.5);
 
+					// Clamp pan to viewport bounds (see docs/SMART_ZOOM_SPEC.md)
+					const { pan: clampedPan, clampedEdges: edges } = clampPanToViewport(
+						currentPanRef.current,
+						currentZoomRef.current,
+						{ width: video.videoWidth, height: video.videoHeight },
+					);
+					currentPanRef.current = clampedPan;
+
 					setZoom(currentZoomRef.current);
 					setPan({ ...currentPanRef.current });
+					setClampedEdges(edges);
 					setDebugLandmarks([]);
 				}
 			}
@@ -212,6 +271,7 @@ export function useSmartZoom({
 		isModelLoading,
 		zoom,
 		pan,
+		clampedEdges,
 		debugLandmarks,
 	};
 }
