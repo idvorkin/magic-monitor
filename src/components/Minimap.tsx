@@ -34,20 +34,14 @@ export function Minimap({ stream, zoom, pan, frame, onPanTo }: MinimapProps) {
 
 	// if (zoom <= 1) return null; // Always show minimap
 
-	const videoWidth = frame
-		? frame.width
-		: stream?.getVideoTracks()[0]?.getSettings().width || 640;
-	const videoHeight = frame
-		? frame.height
-		: stream?.getVideoTracks()[0]?.getSettings().height || 480;
-
 	// Calculate overlay size
 	const widthPercent = 100 / zoom;
 	const heightPercent = 100 / zoom;
 
 	// Calculate position as percentage
-	const leftPercent = 50 - (pan.x / videoWidth) * 100 - widthPercent / 2;
-	const topPercent = 50 - (pan.y / videoHeight) * 100 - heightPercent / 2;
+	// Pan is NORMALIZED (0-1 range), so multiply by 100 for percentage
+	const leftPercent = 50 - pan.x * 100 - widthPercent / 2;
+	const topPercent = 50 - pan.y * 100 - heightPercent / 2;
 
 	const handleClick = (e: React.MouseEvent) => {
 		if (!onPanTo || !containerRef.current) return;
@@ -60,19 +54,11 @@ export function Minimap({ stream, zoom, pan, frame, onPanTo }: MinimapProps) {
 		const u = x / rect.width;
 		const v = y / rect.height;
 
-		// Calculate target pan to center on this point
+		// Calculate target pan in NORMALIZED coordinates
 		// If u = 0.5 (center), targetPan = 0
-		// If u = 0 (left edge), we need to shift image RIGHT, so pan is positive?
-		// Wait, let's check coordinate system again.
-		// In CameraStage: transform: translate(pan.x, pan.y)
-		// If pan.x is positive, image moves RIGHT.
-		// If we want to see the LEFT edge (u=0), we need to move image RIGHT.
-		// Center is 0.5.
-		// Target shift = (0.5 - u) * videoWidth.
-		// Check: if u=0, shift = 0.5 * W. Image moves right by half width. Left edge is now at center. Correct.
-
-		const targetPanX = (0.5 - u) * videoWidth;
-		const targetPanY = (0.5 - v) * videoHeight;
+		// If u = 0 (left edge), targetPan = 0.5 (shift view left to show left edge)
+		const targetPanX = 0.5 - u;
+		const targetPanY = 0.5 - v;
 
 		onPanTo({ x: targetPanX, y: targetPanY });
 	};

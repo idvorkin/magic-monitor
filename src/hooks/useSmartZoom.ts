@@ -37,7 +37,36 @@ export interface DebugTraceEntry {
 
 const DEBUG_TRACE_MAX_ENTRIES = 900; // ~30 seconds at 30fps
 
-// Pure function: Clamp pan to viewport bounds (see docs/SMART_ZOOM_SPEC.md)
+// Pure function: Clamp NORMALIZED pan to viewport bounds (resolution-independent)
+// Pan is in range [-maxPan, +maxPan] where maxPan = (1 - 1/zoom) / 2
+// See docs/SMART_ZOOM_SPEC.md for derivation
+export function clampNormalizedPan(
+	pan: { x: number; y: number },
+	zoom: number,
+): { pan: { x: number; y: number }; clampedEdges: ClampedEdges } {
+	// maxPan = (1 - 1/zoom) / 2
+	// At zoom 1: maxPan = 0 (no pan allowed)
+	// At zoom 2: maxPan = 0.25 (can shift 25% from center)
+	// At zoom 3: maxPan = 0.333 (can shift 33% from center)
+	const maxPan = (1 - 1 / zoom) / 2;
+
+	const clampedEdges: ClampedEdges = {
+		left: pan.x >= maxPan,
+		right: pan.x <= -maxPan,
+		top: pan.y >= maxPan,
+		bottom: pan.y <= -maxPan,
+	};
+
+	const clampedPan = {
+		x: Math.min(Math.max(pan.x, -maxPan), maxPan),
+		y: Math.min(Math.max(pan.y, -maxPan), maxPan),
+	};
+
+	return { pan: clampedPan, clampedEdges };
+}
+
+// LEGACY: Pixel-based clamp function - kept for backwards compatibility
+// Prefer clampNormalizedPan for new code
 export function clampPanToViewport(
 	pan: { x: number; y: number },
 	zoom: number,
@@ -89,7 +118,8 @@ export function useSmartZoom({
 	const MIN_ZOOM = 1;
 	const MAX_ZOOM = 3;
 	const ZOOM_THRESHOLD = 0.1;
-	const PAN_THRESHOLD = 50;
+	// Pan threshold in normalized coords (0.025 ≈ 50px on 1920px video)
+	const PAN_THRESHOLD = 0.025;
 
 	// Output state
 	const [zoom, setZoom] = useState(1);
@@ -187,37 +217,14 @@ export function useSmartZoom({
 					// Clamp zoom (see docs/SMART_ZOOM_SPEC.md)
 					targetZoom = Math.min(Math.max(targetZoom, MIN_ZOOM), MAX_ZOOM);
 
-					// Determine target pan
-					// Pan is offset from center.
+					// Determine target pan in NORMALIZED coordinates (0-1 range)
+					// Pan of 0 = centered, positive = shift view left/up
 					// If center is 0.5, pan is 0.
-					// If center is 0.8, pan should shift view right.
-					// Pan units in CSS transform translate(x, y) are usually pixels or percent.
-					// Our CameraStage uses pixels: translate(${pan.x}px, ${pan.y}px)
-					// But wait, the CameraStage logic for manual pan is:
-					// translate(x, y) applied BEFORE scale? Or AFTER?
-					// Let's check CameraStage: transform: `scale(${zoom}) translate(${pan.x}px, ${pan.y}px)`
-					// This means pan is in PRE-ZOOM coordinates (or post-zoom depending on order).
-					// Actually, standard CSS transform order is right-to-left for composition, but written left-to-right.
-					// `scale(Z) translate(X, Y)` means:
-					// 1. Translate by (X, Y)
-					// 2. Scale by Z
-					// So X and Y are in the unscaled coordinate space? No, wait.
-					// If I translate 100px then scale 2x, the visual shift is 200px.
+					// If center is 0.8 (right side), pan is -0.3 (shift view right to center hand)
+					const targetPanX = 0.5 - centerX;
+					const targetPanY = 0.5 - centerY;
 
-					// Let's look at how manual pan works in CameraStage:
-					// setPan(prev => ({ x: prev.x + dx / zoom, y: prev.y + dy / zoom }));
-					// It divides by zoom, implying pan is in "world" (video) coordinates?
-					// If I drag 100px on screen, and zoom is 2x, I want to move 50px in video space.
-
-					// Target Center (0-1) needs to be moved to Screen Center (0.5).
-					// Delta = 0.5 - CenterX.
-					// If CenterX is 0.8 (right side), Delta is -0.3. We need to shift LEFT.
-					// So PanX = Delta * VideoWidth.
-
-					const targetPanX = (0.5 - centerX) * video.videoWidth;
-					const targetPanY = (0.5 - centerY) * video.videoHeight;
-
-					// Hysteresis / Deadband Check
+					// Hysteresis / Deadband Check (all in normalized coordinates)
 					const zoomDelta = Math.abs(
 						targetZoom - committedTargetRef.current.zoom,
 					);
@@ -225,6 +232,7 @@ export function useSmartZoom({
 						(targetPanX - committedTargetRef.current.pan.x) ** 2 +
 							(targetPanY - committedTargetRef.current.pan.y) ** 2,
 					);
+					// panDist is now in normalized units (0-1), threshold is also normalized
 
 					// Only update committed target if change is significant
 					if (zoomDelta > ZOOM_THRESHOLD || panDist > PAN_THRESHOLD) {
@@ -248,15 +256,14 @@ export function useSmartZoom({
 						(committedTargetRef.current.pan.y - currentPanRef.current.y) *
 							smoothFactor;
 
-					// Clamp pan to viewport bounds (see docs/SMART_ZOOM_SPEC.md)
-					const { pan: clampedPan, clampedEdges: edges } = clampPanToViewport(
+					// Clamp pan to viewport bounds (using normalized coordinates)
+					const { pan: clampedPan, clampedEdges: edges } = clampNormalizedPan(
 						currentPanRef.current,
 						currentZoomRef.current,
-						{ width: video.videoWidth, height: video.videoHeight },
 					);
 					currentPanRef.current = clampedPan;
 
-					// Record debug trace entry
+					// Record debug trace entry (pan values are now normalized)
 					frameCountRef.current++;
 					const traceEntry: DebugTraceEntry = {
 						timestamp: performance.now(),
@@ -296,15 +303,14 @@ export function useSmartZoom({
 						currentPanRef.current.y +
 						(0 - currentPanRef.current.y) * (smoothFactor * 0.5);
 
-					// Clamp pan to viewport bounds (see docs/SMART_ZOOM_SPEC.md)
-					const { pan: clampedPan, clampedEdges: edges } = clampPanToViewport(
+					// Clamp pan to viewport bounds (using normalized coordinates)
+					const { pan: clampedPan, clampedEdges: edges } = clampNormalizedPan(
 						currentPanRef.current,
 						currentZoomRef.current,
-						{ width: video.videoWidth, height: video.videoHeight },
 					);
 					currentPanRef.current = clampedPan;
 
-					// Record debug trace entry (no hands)
+					// Record debug trace entry (no hands, pan values are normalized)
 					frameCountRef.current++;
 					const traceEntry: DebugTraceEntry = {
 						timestamp: performance.now(),

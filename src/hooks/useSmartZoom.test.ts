@@ -1,6 +1,10 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { clampPanToViewport, useSmartZoom } from "./useSmartZoom";
+import {
+	clampNormalizedPan,
+	clampPanToViewport,
+	useSmartZoom,
+} from "./useSmartZoom";
 
 // Mock MediaPipe
 const mockDetectForVideo = vi.fn();
@@ -201,11 +205,204 @@ describe("useSmartZoom", () => {
 		expect(result.current.zoom).not.toBe(initialZoom);
 		expect(result.current.zoom).toBeCloseTo(2.0, 1);
 	});
+
+	it("should return normalized pan values (0-1 range)", async () => {
+		const { result } = renderHook(() =>
+			useSmartZoom({
+				videoRef: { current: videoElement },
+				enabled: true,
+				smoothFactor: 1.0, // Instant for testing
+			}),
+		);
+
+		await act(async () => {
+			await Promise.resolve();
+		});
+
+		// Hand at right side of frame: center at x=0.8
+		// Target pan = 0.5 - 0.8 = -0.3 (shift view right to center hand)
+		// At zoom 2, maxPan = 0.25, so clamped to -0.25
+		const landmarks = [
+			[
+				{ x: 0.7, y: 0.4, z: 0 }, // Box from 0.7-0.9, center at 0.8
+				{ x: 0.9, y: 0.6, z: 0 },
+			],
+		];
+		mockDetectForVideo.mockReturnValue({ landmarks });
+		advanceFrame();
+
+		// Pan should be in normalized range, not pixels
+		// Should be small values like -0.25, not large values like -480
+		expect(result.current.pan.x).toBeGreaterThan(-1);
+		expect(result.current.pan.x).toBeLessThan(1);
+		expect(result.current.pan.y).toBeGreaterThan(-1);
+		expect(result.current.pan.y).toBeLessThan(1);
+	});
+});
+
+// Pure function tests for NORMALIZED pan (resolution-independent)
+// See docs/SMART_ZOOM_SPEC.md - using 0-1 coordinates throughout
+describe("clampNormalizedPan", () => {
+	/**
+	 * Normalized Pan Coordinate System:
+	 * - Pan is in range [-maxPan, +maxPan] where maxPan = (1 - 1/zoom) / 2
+	 * - Pan of 0 means centered
+	 * - Positive pan shifts view left/up (shows right/bottom of video)
+	 * - At zoom 1: maxPan = 0 (no pan allowed)
+	 * - At zoom 2: maxPan = 0.25 (can shift 25% from center)
+	 * - At zoom 3: maxPan = 0.333 (can shift 33% from center)
+	 *
+	 * CSS usage: transform: scale(zoom) translate(pan.x * 100%, pan.y * 100%)
+	 */
+
+	it("should allow no pan at zoom 1", () => {
+		const result = clampNormalizedPan({ x: 0.5, y: 0.3 }, 1);
+
+		expect(result.pan.x).toBe(0);
+		expect(result.pan.y).toBe(0);
+		expect(result.clampedEdges.left).toBe(true);
+		expect(result.clampedEdges.top).toBe(true);
+	});
+
+	it("should allow pan up to 0.25 at zoom 2", () => {
+		// maxPan = (1 - 1/2) / 2 = 0.25
+		const result = clampNormalizedPan({ x: 0.2, y: 0.1 }, 2);
+
+		expect(result.pan.x).toBe(0.2); // Within bounds
+		expect(result.pan.y).toBe(0.1); // Within bounds
+		expect(result.clampedEdges.left).toBe(false);
+		expect(result.clampedEdges.right).toBe(false);
+	});
+
+	it("should clamp pan at 0.25 boundary for zoom 2", () => {
+		const result = clampNormalizedPan({ x: 0.4, y: -0.3 }, 2);
+
+		expect(result.pan.x).toBe(0.25); // Clamped to max
+		expect(result.pan.y).toBe(-0.25); // Clamped to -max
+		expect(result.clampedEdges.left).toBe(true);
+		expect(result.clampedEdges.bottom).toBe(true);
+	});
+
+	it("should allow pan up to ~0.333 at zoom 3", () => {
+		// maxPan = (1 - 1/3) / 2 = 1/3 ≈ 0.333
+		const result = clampNormalizedPan({ x: 0.5, y: 0.5 }, 3);
+
+		expect(result.pan.x).toBeCloseTo(0.333, 2);
+		expect(result.pan.y).toBeCloseTo(0.333, 2);
+		expect(result.clampedEdges.left).toBe(true);
+		expect(result.clampedEdges.top).toBe(true);
+	});
+
+	it("should handle negative pan values", () => {
+		const result = clampNormalizedPan({ x: -0.3, y: -0.1 }, 2);
+
+		expect(result.pan.x).toBe(-0.25); // Clamped
+		expect(result.pan.y).toBe(-0.1); // Within bounds
+		expect(result.clampedEdges.right).toBe(true);
+		expect(result.clampedEdges.left).toBe(false);
+	});
+
+	it("should work with CSS transform math", () => {
+		// At zoom 2, max normalized pan = 0.25
+		// CSS: scale(2) translate(25%, 0)
+		// Visual shift = 25% * 2 = 50% of element
+		// At zoom 2, visible area is 50% of video, hidden is 50% (25% each side)
+		// So 50% visual shift exactly reaches the edge ✓
+
+		const result = clampNormalizedPan({ x: 1.0, y: 0 }, 2);
+		expect(result.pan.x).toBe(0.25);
+
+		// Verify: visual shift = pan * zoom = 0.25 * 2 = 0.5 (50%)
+		// Max allowed = (zoom - 1) / (2 * zoom) * zoom = (zoom - 1) / 2 = 0.5 ✓
+		const visualShift = result.pan.x * 2;
+		expect(visualShift).toBe(0.5);
+	});
 });
 
 // Pure function tests (see docs/SMART_ZOOM_SPEC.md - Viewport Bounds Constraint)
-describe("clampPanToViewport", () => {
+// LEGACY: pixel-based clamp function - keeping for backwards compatibility during migration
+describe("clampPanToViewport (legacy pixel-based)", () => {
 	const videoSize = { width: 1920, height: 1080 };
+
+	/**
+	 * CSS Transform Order Bug Test
+	 *
+	 * The CSS transform `scale(Z) translate(X, Y)` applies right-to-left:
+	 * 1. Translate by (X, Y)
+	 * 2. Scale by Z
+	 *
+	 * This means the visual pan = X * Z, not X.
+	 *
+	 * For the video to fill the viewport without blank space:
+	 * - At zoom Z, the video is Z times larger
+	 * - The visible portion is 1/Z of the video
+	 * - Max visual pan = (videoSize * Z - videoSize) / 2 = videoSize * (Z - 1) / 2
+	 *
+	 * But if pan is in pre-scale coordinates (gets multiplied by Z):
+	 * - maxPan * Z must not exceed videoSize * (Z - 1) / 2
+	 * - maxPan = videoSize * (Z - 1) / (2 * Z)
+	 *
+	 * Current formula: maxPan = videoSize * (1 - 1/Z) / 2 = videoSize * (Z - 1) / (2 * Z)
+	 * This IS correct for pre-scale pan coordinates!
+	 *
+	 * BUT if CSS uses `translate() scale()` (translate in post-scale screen coords):
+	 * - maxPan = videoSize * (Z - 1) / 2 (no division by Z needed)
+	 *
+	 * The spec formula assumes pan is in VIDEO coordinates (post-scale).
+	 * If CameraStage uses scale() translate(), pan is in PRE-scale coords.
+	 */
+	describe("CSS transform integration", () => {
+		it("should ensure video fills viewport at max clamped pan (zoom 2)", () => {
+			// At zoom 2 on 1920px video:
+			// - Scaled video width = 1920 * 2 = 3840px
+			// - Viewport sees 1920px centered
+			// - Max shift before exposing edge = (3840 - 1920) / 2 = 960px
+			//
+			// With scale(2) translate(X, Y):
+			// - Visual shift = X * 2
+			// - For 960px max visual shift: X must be <= 480px
+			//
+			// With translate(X, Y) scale(2):
+			// - Visual shift = X (translate happens after scale, in screen coords)
+			// - For 960px max visual shift: X can be 960px
+			//
+			// Current clampPanToViewport returns maxPanX = 480 at zoom 2
+			// This is correct for scale() translate() order
+
+			const result = clampPanToViewport({ x: 1000, y: 0 }, 2, videoSize);
+
+			// The clamped pan value
+			expect(result.pan.x).toBe(480);
+
+			// Critical: when applied as scale(2) translate(480px, 0),
+			// the visual shift is 480 * 2 = 960px
+			// This should exactly reach the edge (no blank space, no overflow)
+			const visualShift = result.pan.x * 2; // CSS multiplies by zoom
+			const maxAllowedVisualShift = (videoSize.width * 2 - videoSize.width) / 2;
+			expect(visualShift).toBe(maxAllowedVisualShift);
+		});
+
+		it("should ensure video fills viewport at max clamped pan (zoom 3)", () => {
+			// At zoom 3 on 1920px video:
+			// - Scaled video = 5760px, viewport = 1920px
+			// - Max visual shift = (5760 - 1920) / 2 = 1920px
+			//
+			// With scale(3) translate(X, Y):
+			// - Visual shift = X * 3
+			// - For 1920px max: X <= 640px
+			//
+			// clampPanToViewport should return maxPanX ≈ 640
+
+			const result = clampPanToViewport({ x: 1000, y: 0 }, 3, videoSize);
+
+			expect(result.pan.x).toBeCloseTo(640, 0);
+
+			// Verify visual math
+			const visualShift = result.pan.x * 3;
+			const maxAllowedVisualShift = (videoSize.width * 3 - videoSize.width) / 2;
+			expect(visualShift).toBeCloseTo(maxAllowedVisualShift, 0);
+		});
+	});
 
 	it("should allow no pan at zoom 1 (spec: maxPan = 0)", () => {
 		// Positive input pan → clamped to 0, hit left/top boundaries

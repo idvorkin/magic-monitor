@@ -59,13 +59,13 @@ export function CameraStage() {
 		setIsHQ(!isHQ);
 	}, [isHQ, isLowMemory, isMobile]);
 
-	// Helper to clamp pan values
+	// Helper to clamp NORMALIZED pan values (resolution-independent)
+	// See docs/SMART_ZOOM_SPEC.md: maxPan = (1 - 1/zoom) / 2
 	const clampPan = useCallback((p: { x: number; y: number }, z: number) => {
-		const maxPanX = (videoRef.current?.videoWidth || 0) * 0.5 * (z - 1);
-		const maxPanY = (videoRef.current?.videoHeight || 0) * 0.5 * (z - 1);
+		const maxPan = (1 - 1 / z) / 2;
 		return {
-			x: Math.max(-maxPanX, Math.min(maxPanX, p.x)),
-			y: Math.max(-maxPanY, Math.min(maxPanY, p.y)),
+			x: Math.max(-maxPan, Math.min(maxPan, p.x)),
+			y: Math.max(-maxPan, Math.min(maxPan, p.y)),
 		};
 	}, []);
 
@@ -187,9 +187,20 @@ export function CameraStage() {
 			const dx = e.clientX - lastMousePos.x;
 			const dy = e.clientY - lastMousePos.y;
 
+			// Convert pixel delta to normalized coordinates
+			// Use video element's rendered size for accurate conversion
+			const videoRect = videoRef.current?.getBoundingClientRect();
+			const renderedWidth = videoRect?.width || 1;
+			const renderedHeight = videoRect?.height || 1;
+
+			// Normalized delta: pixel movement / (rendered size * zoom)
+			// The zoom factor accounts for scale(zoom) in CSS transform
+			const normalizedDx = dx / (renderedWidth * zoom);
+			const normalizedDy = dy / (renderedHeight * zoom);
+
 			const proposedPan = {
-				x: pan.x + dx / zoom,
-				y: pan.y + dy / zoom,
+				x: pan.x + normalizedDx,
+				y: pan.y + normalizedDy,
 			};
 
 			setPan(clampPan(proposedPan, zoom));
@@ -328,7 +339,10 @@ export function CameraStage() {
 				muted
 				className={`max-w-full max-h-full object-contain transition-transform duration-75 ease-out ${timeMachine.isReplaying ? "hidden" : "block"}`}
 				style={{
-					transform: `scale(${zoom}) translate(${pan.x}px, ${pan.y}px)`,
+					// Pan is NORMALIZED (0-1 range), multiply by 100 to get CSS percentage
+					// scale(Z) translate(X%, Y%) - translate happens first, then scaled
+					// See docs/SMART_ZOOM_SPEC.md for details
+					transform: `scale(${zoom}) translate(${(pan.x * 100).toFixed(2)}%, ${(pan.y * 100).toFixed(2)}%)`,
 				}}
 			/>
 
@@ -337,7 +351,8 @@ export function CameraStage() {
 				ref={canvasRef}
 				className={`max-w-full max-h-full object-contain transition-transform duration-75 ease-out ${timeMachine.isReplaying ? "block" : "hidden"}`}
 				style={{
-					transform: `scale(${zoom}) translate(${pan.x}px, ${pan.y}px)`,
+					// Pan is NORMALIZED (0-1 range), multiply by 100 to get CSS percentage
+					transform: `scale(${zoom}) translate(${(pan.x * 100).toFixed(2)}%, ${(pan.y * 100).toFixed(2)}%)`,
 				}}
 			/>
 
