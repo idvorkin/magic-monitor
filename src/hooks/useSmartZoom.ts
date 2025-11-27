@@ -80,13 +80,13 @@ export function useSmartZoom({
 	useEffect(() => {
 		async function loadModel() {
 			try {
-				const vision = await FilesetResolver.forVisionTasks(
-					"https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm",
-				);
+				// Use local WASM files for offline support
+				const vision = await FilesetResolver.forVisionTasks("/mediapipe/wasm");
 
+				// Use local model file for offline support
 				landmarkerRef.current = await HandLandmarker.createFromOptions(vision, {
 					baseOptions: {
-						modelAssetPath: `https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task`,
+						modelAssetPath: "/mediapipe/hand_landmarker.task",
 						delegate: "GPU",
 					},
 					runningMode: "VIDEO",
@@ -103,6 +103,7 @@ export function useSmartZoom({
 		loadModel();
 	}, []);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: isModelLoading triggers effect re-run when model loads
 	useEffect(() => {
 		if (!enabled || !landmarkerRef.current || !videoRef.current) return;
 
@@ -265,7 +266,7 @@ export function useSmartZoom({
 		return () => {
 			if (requestRef.current) cancelAnimationFrame(requestRef.current);
 		};
-	}, [enabled, videoRef, padding, smoothFactor]);
+	}, [enabled, videoRef, padding, smoothFactor, isModelLoading]);
 
 	return {
 		isModelLoading,

@@ -259,9 +259,14 @@ export function CameraStage() {
 				onPanTo={handlePanTo}
 			/>
 
-			{/* RAM Monitor */}
-			<div className="absolute bottom-8 right-8 z-40 text-white/50 font-mono text-xs pointer-events-none">
-				RAM: {timeMachine.memoryUsageMB} MB
+			{/* Status Bar */}
+			<div className="absolute bottom-8 right-8 z-40 text-white/50 font-mono text-xs pointer-events-none flex flex-col items-end gap-1">
+				{smartZoom.isModelLoading && (
+					<span className="text-blue-400 animate-pulse">
+						Loading AI model...
+					</span>
+				)}
+				<span>RAM: {timeMachine.memoryUsageMB} MB</span>
 			</div>
 
 			{error && (
@@ -368,10 +373,10 @@ export function CameraStage() {
 						onClick={() => setIsSmartZoom(!isSmartZoom)}
 						disabled={smartZoom.isModelLoading}
 						className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
-							isSmartZoom
+							isSmartZoom && !smartZoom.isModelLoading
 								? "bg-green-600 text-white"
 								: "bg-white/10 text-white/50 hover:bg-white/20 hover:text-white"
-						} ${smartZoom.isModelLoading ? "opacity-50 cursor-wait" : ""}`}
+						} ${smartZoom.isModelLoading ? "cursor-wait" : ""}`}
 						title="Smart Zoom - Auto-follow movement"
 					>
 						{smartZoom.isModelLoading

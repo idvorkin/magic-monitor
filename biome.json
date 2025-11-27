@@ -6,7 +6,7 @@
 		"useIgnoreFile": true
 	},
 	"files": {
-		"includes": ["**"]
+		"includes": ["**", "!public/mediapipe"]
 	},
 	"formatter": {
 		"enabled": true,
