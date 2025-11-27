@@ -69,6 +69,7 @@ graph TB
         C3[Hysteresis/deadband]
         C4[Smooth interpolation]
     end
+    click C1 "docs/SMART_ZOOM_SPEC.md" "Smart Zoom Specification"
 
     subgraph useFlashDetector
         D1[Color sampling]
@@ -103,11 +104,13 @@ This command builds the project and pushes it to Surge.
 ## Local Development
 
 1.  Install dependencies:
+
     ```bash
     npm install
     ```
 
 2.  Start the development server:
+
     ```bash
     npm run dev
     ```
