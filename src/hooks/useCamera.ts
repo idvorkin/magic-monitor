@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import * as CameraService from "../services/CameraService";
 
 export function useCamera(initialDeviceId?: string) {
 	const [stream, setStream] = useState<MediaStream | null>(null);
+	const streamRef = useRef<MediaStream | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
 	const [selectedDeviceId, setSelectedDeviceId] = useState<string>(
@@ -39,13 +40,12 @@ export function useCamera(initialDeviceId?: string) {
 	// Handle stream lifecycle
 	useEffect(() => {
 		let isActive = true;
-		let currentStream: MediaStream | null = null;
 
 		async function setupCamera() {
 			try {
-				// Stop previous stream if any
-				if (stream) {
-					CameraService.stop(stream);
+				// Stop previous stream if any (use ref to avoid dependency)
+				if (streamRef.current) {
+					CameraService.stop(streamRef.current);
 				}
 
 				const newStream = await CameraService.start(
@@ -57,7 +57,7 @@ export function useCamera(initialDeviceId?: string) {
 					return;
 				}
 
-				currentStream = newStream;
+				streamRef.current = newStream;
 				setStream(newStream);
 				setError(null);
 
@@ -87,11 +87,12 @@ export function useCamera(initialDeviceId?: string) {
 
 		return () => {
 			isActive = false;
-			if (currentStream) {
-				CameraService.stop(currentStream);
+			if (streamRef.current) {
+				CameraService.stop(streamRef.current);
+				streamRef.current = null;
 			}
 		};
-	}, [selectedDeviceId, getDevices, stream]); // Re-run when selected device changes
+	}, [selectedDeviceId, getDevices]); // Re-run when selected device changes
 
 	return {
 		stream,

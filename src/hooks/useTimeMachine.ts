@@ -1,5 +1,53 @@
 import { useEffect, useRef, useState } from "react";
 
+// ===== Pure utility functions (exported for testing) =====
+
+/** Calculate memory usage in MB for a buffer of frames */
+export function calculateMemoryUsageMB(
+	frameCount: number,
+	width: number,
+	height: number,
+): number {
+	if (frameCount === 0 || width === 0 || height === 0) return 0;
+	const bytesPerPixel = 4; // RGBA
+	const totalBytes = width * height * bytesPerPixel * frameCount;
+	return Math.round(totalBytes / 1024 / 1024);
+}
+
+/** Convert time (seconds) to frame index */
+export function timeToFrameIndex(time: number, fps: number): number {
+	return Math.floor(time * fps);
+}
+
+/** Convert frame index to time (seconds) */
+export function frameIndexToTime(index: number, fps: number): number {
+	return index / fps;
+}
+
+/** Calculate evenly spaced thumbnail indices from a buffer */
+export function getThumbnailIndices(
+	bufferLength: number,
+	count: number,
+): number[] {
+	if (bufferLength === 0 || count === 0) return [];
+
+	const indices: number[] = [];
+	const step = Math.max(1, Math.floor(bufferLength / count));
+
+	for (let i = 0; i < count; i++) {
+		const index = Math.min(i * step, bufferLength - 1);
+		indices.push(index);
+	}
+	return indices;
+}
+
+/** Calculate max frames allowed in buffer */
+export function calculateMaxFrames(bufferSeconds: number, fps: number): number {
+	return Math.ceil(bufferSeconds * fps);
+}
+
+// ===== Hook implementation =====
+
 interface TimeMachineConfig {
 	videoRef: React.RefObject<HTMLVideoElement | null>;
 	enabled: boolean; // Master switch for recording
@@ -76,6 +124,10 @@ export function useTimeMachine({
 			lastCaptureTimeRef.current = timestamp;
 
 			const video = videoRef.current;
+			if (video.videoWidth === 0 || video.videoHeight === 0) {
+				requestRef.current = requestAnimationFrame(captureFrame);
+				return;
+			}
 			const canvas = canvasRef.current!;
 
 			// Set canvas size based on quality
@@ -96,7 +148,7 @@ export function useTimeMachine({
 				bufferRef.current.push(bitmap);
 
 				// Prune buffer
-				const maxFrames = Math.ceil(bufferSeconds * fps);
+				const maxFrames = calculateMaxFrames(bufferSeconds, fps);
 				while (bufferRef.current.length > maxFrames) {
 					const oldFrame = bufferRef.current.shift();
 					oldFrame?.close();
@@ -180,51 +232,47 @@ export function useTimeMachine({
 	};
 
 	const seek = (time: number) => {
-		// time is in seconds
-		const frameIndex = Math.floor(time * fps);
+		const frameIndex = timeToFrameIndex(time, fps);
 		setPlaybackIndex(frameIndex);
 	};
 
 	const [memoryUsageMB, setMemoryUsageMB] = useState(0);
 
-	// ... inside capture loop or effect
-	// We can approximate memory usage
+	// Update memory usage estimate periodically
 	useEffect(() => {
 		const interval = setInterval(() => {
 			if (bufferRef.current.length > 0) {
 				const sample = bufferRef.current[0];
-				const sizePerFrame = sample.width * sample.height * 4; // RGBA
-				const totalBytes = sizePerFrame * bufferRef.current.length;
-				setMemoryUsageMB(Math.round(totalBytes / 1024 / 1024));
+				setMemoryUsageMB(
+					calculateMemoryUsageMB(
+						bufferRef.current.length,
+						sample.width,
+						sample.height,
+					),
+				);
 			} else {
 				setMemoryUsageMB(0);
 			}
-		}, 1000); // Update every second
+		}, 1000);
 		return () => clearInterval(interval);
 	}, []);
 
 	const getThumbnails = (count: number) => {
 		if (bufferRef.current.length === 0) return [];
 
-		const thumbnails: { time: number; frame: ImageBitmap }[] = [];
-		const step = Math.max(1, Math.floor(bufferRef.current.length / count));
-
-		for (let i = 0; i < count; i++) {
-			const index = Math.min(i * step, bufferRef.current.length - 1);
-			thumbnails.push({
-				time: index / fps,
-				frame: bufferRef.current[index],
-			});
-		}
-		return thumbnails;
+		const indices = getThumbnailIndices(bufferRef.current.length, count);
+		return indices.map((index) => ({
+			time: frameIndexToTime(index, fps),
+			frame: bufferRef.current[index],
+		}));
 	};
 
 	return {
 		frame,
 		isReplaying,
-		bufferDuration: bufferRef.current.length / fps,
-		currentTime: playbackIndex / fps,
-		totalTime: bufferRef.current.length / fps,
+		bufferDuration: frameIndexToTime(bufferRef.current.length, fps),
+		currentTime: frameIndexToTime(playbackIndex, fps),
+		totalTime: frameIndexToTime(bufferRef.current.length, fps),
 		isPlaying,
 		memoryUsageMB,
 		enterReplay,

@@ -7,6 +7,39 @@ interface FlashDetectorConfig {
 	threshold: number; // 0-100
 }
 
+export interface RGB {
+	r: number;
+	g: number;
+	b: number;
+}
+
+// Max possible distance in RGB space: sqrt(255^2 * 3) ≈ 441.67
+export const MAX_COLOR_DISTANCE = Math.sqrt(255 ** 2 * 3);
+
+/** Calculate Euclidean distance between two RGB colors */
+export function colorDistance(color1: RGB, color2: RGB): number {
+	return Math.sqrt(
+		(color1.r - color2.r) ** 2 +
+			(color1.g - color2.g) ** 2 +
+			(color1.b - color2.b) ** 2,
+	);
+}
+
+/** Convert threshold (0-100) to max allowed color distance */
+export function thresholdToMaxDistance(threshold: number): number {
+	return (threshold / 100) * MAX_COLOR_DISTANCE;
+}
+
+/** Check if a color matches the target within threshold */
+export function isColorMatch(
+	sample: RGB,
+	target: RGB,
+	threshold: number,
+): boolean {
+	const maxDist = thresholdToMaxDistance(threshold);
+	return colorDistance(sample, target) < maxDist;
+}
+
 export function useFlashDetector({
 	videoRef,
 	enabled,
@@ -52,23 +85,17 @@ export function useFlashDetector({
 			let matchCount = 0;
 			const totalPixels = data.length / 4;
 
-			// Simple color distance check
-			// Max distance is sqrt(255^2 * 3) = 441.6
-			const maxDist = (threshold / 100) * 441.6;
+			const maxDist = thresholdToMaxDistance(threshold);
 
 			for (let i = 0; i < data.length; i += 4 * 4) {
 				// Sample every 4th pixel for speed
-				const r = data[i];
-				const g = data[i + 1];
-				const b = data[i + 2];
+				const sample: RGB = {
+					r: data[i],
+					g: data[i + 1],
+					b: data[i + 2],
+				};
 
-				const dist = Math.sqrt(
-					(r - targetColor.r) ** 2 +
-						(g - targetColor.g) ** 2 +
-						(b - targetColor.b) ** 2,
-				);
-
-				if (dist < maxDist) {
+				if (colorDistance(sample, targetColor) < maxDist) {
 					matchCount++;
 				}
 			}
