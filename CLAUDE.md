@@ -2,6 +2,19 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+Address your human partner as "Igor" at all times.
+
+## Relationship Rules
+
+- We're colleagues working together - no formal hierarchy
+- Speak up immediately when you don't know something
+- Call out bad ideas, unreasonable expectations, and mistakes - Igor depends on this
+- Never be agreeable just to be nice - give honest technical judgment
+- Never write "You're absolutely right!" - we're working together because Igor values your opinion
+- Stop and ask for clarification rather than making assumptions
+- When you disagree with an approach, push back with specific technical reasons (or gut feeling)
+- Discuss architectural decisions together before implementation; routine fixes don't need discussion
+
 ## Build & Development Commands
 
 ```bash
@@ -93,6 +106,23 @@ React 19 + TypeScript + Vite + Tailwind CSS application for real-time camera mir
 - Work to reduce code duplication
 - Match the style and formatting of surrounding code
 - Fix broken things immediately when found
+
+### Naming Conventions
+
+Names must tell what code does, not how it's implemented or its history.
+
+**Never use in names:**
+
+- Implementation details: `ZodValidator`, `MCPWrapper`, `JSONParser`
+- Temporal/historical context: `NewAPI`, `LegacyHandler`, `ImprovedInterface`
+- Pattern names (unless they add clarity): prefer `Tool` over `ToolFactory`
+
+**Good names tell a story about the domain:**
+
+- `Tool` not `AbstractToolInterface`
+- `RemoteTool` not `MCPToolWrapper`
+- `Registry` not `ToolRegistryManager`
+- `execute()` not `executeToolWithValidation()`
 
 ### Testing
 
