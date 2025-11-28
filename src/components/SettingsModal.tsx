@@ -13,6 +13,10 @@ interface SettingsModalProps {
 	selectedDeviceId: string;
 	onDeviceChange: (deviceId: string) => void;
 
+	// Display
+	isMirror: boolean;
+	onMirrorChange: (isMirror: boolean) => void;
+
 	// Performance
 	isHQ: boolean;
 	onHQChange: (isHQ: boolean) => void;
@@ -51,6 +55,8 @@ export function SettingsModal({
 	devices,
 	selectedDeviceId,
 	onDeviceChange,
+	isMirror,
+	onMirrorChange,
 	isHQ,
 	onHQChange,
 	isLowMemory = false,
@@ -137,6 +143,24 @@ export function SettingsModal({
 								</option>
 							))}
 						</select>
+					</div>
+
+					{/* Mirror Video */}
+					<div className="flex items-center justify-between">
+						<div>
+							<div className="text-white font-medium">Mirror Video</div>
+							<div className="text-xs text-gray-500">
+								Flip video horizontally
+							</div>
+						</div>
+						<button
+							onClick={() => onMirrorChange(!isMirror)}
+							className={`w-12 h-6 rounded-full transition-colors relative ${isMirror ? "bg-blue-600" : "bg-gray-700"}`}
+						>
+							<div
+								className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${isMirror ? "left-7" : "left-1"}`}
+							/>
+						</button>
 					</div>
 
 					{/* Performance */}

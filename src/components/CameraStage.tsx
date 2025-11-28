@@ -22,6 +22,7 @@ const SHOW_HAND_SKELETON_STORAGE_KEY = "magic-monitor-show-hand-skeleton";
 const FLASH_ENABLED_STORAGE_KEY = "magic-monitor-flash-enabled";
 const FLASH_THRESHOLD_STORAGE_KEY = "magic-monitor-flash-threshold";
 const FLASH_TARGET_COLOR_STORAGE_KEY = "magic-monitor-flash-target-color";
+const MIRROR_STORAGE_KEY = "magic-monitor-mirror";
 
 export function CameraStage() {
 	const videoRef = useRef<HTMLVideoElement>(null);
@@ -90,6 +91,11 @@ export function CameraStage() {
 	});
 	const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
+	// Mirror state (persisted to localStorage)
+	const [isMirror, setIsMirrorInternal] = useState(() => {
+		return DeviceService.getStorageItem(MIRROR_STORAGE_KEY) === "true";
+	});
+
 	// Smoothing preset state (persisted to localStorage)
 	const [smoothingPreset, setSmoothingPresetInternal] =
 		useState<SmoothingPreset>(() => {
@@ -149,6 +155,11 @@ export function CameraStage() {
 		},
 		[],
 	);
+
+	const setIsMirror = useCallback((value: boolean) => {
+		setIsMirrorInternal(value);
+		DeviceService.setStorageItem(MIRROR_STORAGE_KEY, String(value));
+	}, []);
 
 	// Initialize HQ based on device detection (once, only if no stored preference)
 	useEffect(() => {
@@ -403,6 +414,8 @@ export function CameraStage() {
 				devices={devices}
 				selectedDeviceId={selectedDeviceId}
 				onDeviceChange={setSelectedDeviceId}
+				isMirror={isMirror}
+				onMirrorChange={setIsMirror}
 				isHQ={isHQ}
 				onHQChange={setIsHQ}
 				isLowMemory={isLowMemory}
@@ -472,7 +485,8 @@ export function CameraStage() {
 					// Pan is NORMALIZED (0-1 range), multiply by 100 to get CSS percentage
 					// scale(Z) translate(X%, Y%) - translate happens first, then scaled
 					// See docs/SMART_ZOOM_SPEC.md for details
-					transform: `scale(${zoom}) translate(${(pan.x * 100).toFixed(2)}%, ${(pan.y * 100).toFixed(2)}%)`,
+					// scaleX(-1) mirrors the video horizontally
+					transform: `${isMirror ? "scaleX(-1) " : ""}scale(${zoom}) translate(${(pan.x * 100).toFixed(2)}%, ${(pan.y * 100).toFixed(2)}%)`,
 				}}
 			/>
 
@@ -490,7 +504,8 @@ export function CameraStage() {
 				className={`max-w-full max-h-full object-contain transition-transform duration-75 ease-out ${timeMachine.isReplaying ? "block" : "hidden"}`}
 				style={{
 					// Pan is NORMALIZED (0-1 range), multiply by 100 to get CSS percentage
-					transform: `scale(${zoom}) translate(${(pan.x * 100).toFixed(2)}%, ${(pan.y * 100).toFixed(2)}%)`,
+					// scaleX(-1) mirrors the canvas horizontally
+					transform: `${isMirror ? "scaleX(-1) " : ""}scale(${zoom}) translate(${(pan.x * 100).toFixed(2)}%, ${(pan.y * 100).toFixed(2)}%)`,
 				}}
 			/>
 
@@ -601,6 +616,18 @@ export function CameraStage() {
 						title="Flash Detection"
 					>
 						{flashEnabled ? "⚡ ARMED" : "⚡ Flash"}
+					</button>
+
+					<button
+						onClick={() => setIsMirror(!isMirror)}
+						className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+							isMirror
+								? "bg-blue-600 text-white"
+								: "bg-white/10 text-white/50 hover:bg-white/20 hover:text-white"
+						}`}
+						title="Mirror video horizontally"
+					>
+						{isMirror ? "🪞 Mirror ✓" : "🪞 Mirror"}
 					</button>
 
 					<button
