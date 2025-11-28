@@ -192,6 +192,13 @@ export function CameraStage() {
 		};
 	}, []);
 
+	// Helper to build video/canvas transform string
+	// Combines mirror, zoom, and pan transforms
+	const getVideoTransform = useCallback(() => {
+		const mirrorTransform = isMirror ? "scaleX(-1) " : "";
+		return `${mirrorTransform}scale(${zoom}) translate(${(pan.x * 100).toFixed(2)}%, ${(pan.y * 100).toFixed(2)}%)`;
+	}, [isMirror, zoom, pan]);
+
 	// Smart Zoom
 	const smartZoom = useSmartZoom({
 		videoRef,
@@ -482,11 +489,8 @@ export function CameraStage() {
 				muted
 				className={`max-w-full max-h-full object-contain transition-transform duration-75 ease-out ${timeMachine.isReplaying ? "hidden" : "block"}`}
 				style={{
-					// Pan is NORMALIZED (0-1 range), multiply by 100 to get CSS percentage
-					// scale(Z) translate(X%, Y%) - translate happens first, then scaled
-					// See docs/SMART_ZOOM_SPEC.md for details
-					// scaleX(-1) mirrors the video horizontally
-					transform: `${isMirror ? "scaleX(-1) " : ""}scale(${zoom}) translate(${(pan.x * 100).toFixed(2)}%, ${(pan.y * 100).toFixed(2)}%)`,
+					// See docs/SMART_ZOOM_SPEC.md for transform details
+					transform: getVideoTransform(),
 				}}
 			/>
 
@@ -503,9 +507,7 @@ export function CameraStage() {
 				ref={canvasRef}
 				className={`max-w-full max-h-full object-contain transition-transform duration-75 ease-out ${timeMachine.isReplaying ? "block" : "hidden"}`}
 				style={{
-					// Pan is NORMALIZED (0-1 range), multiply by 100 to get CSS percentage
-					// scaleX(-1) mirrors the canvas horizontally
-					transform: `${isMirror ? "scaleX(-1) " : ""}scale(${zoom}) translate(${(pan.x * 100).toFixed(2)}%, ${(pan.y * 100).toFixed(2)}%)`,
+					transform: getVideoTransform(),
 				}}
 			/>
 
