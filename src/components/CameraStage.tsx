@@ -12,7 +12,13 @@ import { Minimap } from "./Minimap";
 import { SettingsModal } from "./SettingsModal";
 import { Thumbnail } from "./Thumbnail";
 
+// Storage keys for persisted settings
 const SMOOTHING_PRESET_STORAGE_KEY = "magic-monitor-smoothing-preset";
+const HQ_STORAGE_KEY = "magic-monitor-hq";
+const SMART_ZOOM_STORAGE_KEY = "magic-monitor-smart-zoom";
+const FLASH_ENABLED_STORAGE_KEY = "magic-monitor-flash-enabled";
+const FLASH_THRESHOLD_STORAGE_KEY = "magic-monitor-flash-threshold";
+const FLASH_TARGET_COLOR_STORAGE_KEY = "magic-monitor-flash-target-color";
 
 export function CameraStage() {
 	const videoRef = useRef<HTMLVideoElement>(null);
@@ -28,18 +34,52 @@ export function CameraStage() {
 	// Mobile Detection
 	const { isMobile, isLowMemory } = useMobileDetection();
 
-	// Flash Detection State
-	const [flashEnabled, setFlashEnabled] = useState(false);
-	const [targetColor, setTargetColor] = useState<{
+	// Flash Detection State (persisted to localStorage)
+	const [flashEnabled, setFlashEnabledInternal] = useState(() => {
+		return DeviceService.getStorageItem(FLASH_ENABLED_STORAGE_KEY) === "true";
+	});
+	const [targetColor, setTargetColorInternal] = useState<{
 		r: number;
 		g: number;
 		b: number;
-	} | null>(null);
-	const [threshold, setThreshold] = useState(20);
+	} | null>(() => {
+		const stored = DeviceService.getStorageItem(FLASH_TARGET_COLOR_STORAGE_KEY);
+		if (stored) {
+			try {
+				return JSON.parse(stored);
+			} catch {
+				return null;
+			}
+		}
+		return null;
+	});
+	const [threshold, setThresholdInternal] = useState(() => {
+		const stored = DeviceService.getStorageItem(FLASH_THRESHOLD_STORAGE_KEY);
+		if (stored) {
+			const parsed = Number.parseInt(stored, 10);
+			if (!Number.isNaN(parsed)) return parsed;
+		}
+		return 20;
+	});
 	const [isPickingColor, setIsPickingColor] = useState(false);
-	const [isHQ, setIsHQ] = useState(false); // Default off, will enable on desktop after detection
-	const [hqInitialized, setHqInitialized] = useState(false);
-	const [isSmartZoom, setIsSmartZoom] = useState(true);
+
+	// HQ Mode State (persisted to localStorage)
+	const [isHQ, setIsHQInternal] = useState(() => {
+		const stored = DeviceService.getStorageItem(HQ_STORAGE_KEY);
+		if (stored !== null) return stored === "true";
+		return false; // Default off, will enable on desktop after detection if no stored preference
+	});
+	const [hqInitialized, setHqInitialized] = useState(() => {
+		// If we have a stored preference, consider it already initialized
+		return DeviceService.getStorageItem(HQ_STORAGE_KEY) !== null;
+	});
+
+	// Smart Zoom State (persisted to localStorage)
+	const [isSmartZoom, setIsSmartZoomInternal] = useState(() => {
+		const stored = DeviceService.getStorageItem(SMART_ZOOM_STORAGE_KEY);
+		if (stored !== null) return stored === "true";
+		return true; // Default on
+	});
 	const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
 	// Smoothing preset state (persisted to localStorage)
@@ -56,19 +96,54 @@ export function CameraStage() {
 			return "ema";
 		});
 
-	// Wrapped setter that persists to localStorage
+	// Wrapped setters that persist to localStorage
 	const setSmoothingPreset = useCallback((preset: SmoothingPreset) => {
 		setSmoothingPresetInternal(preset);
 		DeviceService.setStorageItem(SMOOTHING_PRESET_STORAGE_KEY, preset);
 	}, []);
 
-	// Initialize HQ based on device detection (once)
+	const setIsHQ = useCallback((value: boolean) => {
+		setIsHQInternal(value);
+		DeviceService.setStorageItem(HQ_STORAGE_KEY, String(value));
+	}, []);
+
+	const setIsSmartZoom = useCallback((value: boolean) => {
+		setIsSmartZoomInternal(value);
+		DeviceService.setStorageItem(SMART_ZOOM_STORAGE_KEY, String(value));
+	}, []);
+
+	const setFlashEnabled = useCallback((value: boolean) => {
+		setFlashEnabledInternal(value);
+		DeviceService.setStorageItem(FLASH_ENABLED_STORAGE_KEY, String(value));
+	}, []);
+
+	const setThreshold = useCallback((value: number) => {
+		setThresholdInternal(value);
+		DeviceService.setStorageItem(FLASH_THRESHOLD_STORAGE_KEY, String(value));
+	}, []);
+
+	const setTargetColor = useCallback(
+		(color: { r: number; g: number; b: number } | null) => {
+			setTargetColorInternal(color);
+			if (color) {
+				DeviceService.setStorageItem(
+					FLASH_TARGET_COLOR_STORAGE_KEY,
+					JSON.stringify(color),
+				);
+			} else {
+				DeviceService.setStorageItem(FLASH_TARGET_COLOR_STORAGE_KEY, "");
+			}
+		},
+		[],
+	);
+
+	// Initialize HQ based on device detection (once, only if no stored preference)
 	useEffect(() => {
 		if (!hqInitialized) {
 			setIsHQ(!isLowMemory);
 			setHqInitialized(true);
 		}
-	}, [hqInitialized, isLowMemory]);
+	}, [hqInitialized, isLowMemory, setIsHQ]);
 
 	// HQ toggle with mobile warning
 	const handleHQToggle = useCallback(() => {
@@ -81,7 +156,7 @@ export function CameraStage() {
 			if (!proceed) return;
 		}
 		setIsHQ(!isHQ);
-	}, [isHQ, isLowMemory, isMobile]);
+	}, [isHQ, isLowMemory, isMobile, setIsHQ]);
 
 	// Helper to clamp NORMALIZED pan values (resolution-independent)
 	// See docs/SMART_ZOOM_SPEC.md: maxPan = (1 - 1/zoom) / 2
