@@ -45,7 +45,6 @@ export function BugReportModal({
 	const [submitted, setSubmitted] = useState(false);
 	const [hasScreenshotOnClipboard, setHasScreenshotOnClipboard] =
 		useState(false);
-	const [screenshotSavedToDisk, setScreenshotSavedToDisk] = useState(false);
 	const [showShakePrompt, setShowShakePrompt] = useState(false);
 	const [wasOpen, setWasOpen] = useState(false);
 	const isCapturingRef = useRef(false);
@@ -86,9 +85,6 @@ export function BugReportModal({
 			setHasScreenshotOnClipboard(
 				"hasScreenshotOnClipboard" in result &&
 					!!result.hasScreenshotOnClipboard,
-			);
-			setScreenshotSavedToDisk(
-				"screenshotSavedToDisk" in result && !!result.screenshotSavedToDisk,
 			);
 		}
 	}, [title, description, includeMetadata, screenshot, onSubmit]);
@@ -186,14 +182,6 @@ export function BugReportModal({
 								<kbd className="px-1.5 py-0.5 bg-white/10 rounded">Ctrl+V</kbd>{" "}
 								/ <kbd className="px-1.5 py-0.5 bg-white/10 rounded">Cmd+V</kbd>
 							</div>
-						) : screenshotSavedToDisk ? (
-							<div className="text-gray-400 text-sm mb-6">
-								<strong className="text-yellow-400">
-									Screenshot saved to your Photos!
-								</strong>
-								<br />
-								Attach it to the GitHub issue using the file picker.
-							</div>
 						) : (
 							<div className="text-gray-400 text-sm mb-6">
 								Bug details copied to clipboard as backup.
@@ -248,44 +236,53 @@ export function BugReportModal({
 
 							{/* Screenshot */}
 							<div className="space-y-2">
-								<div className="flex items-center justify-between">
-									<span className="text-sm font-medium text-gray-400">
-										Screenshot
-									</span>
-									<button
-										type="button"
-										onClick={handleCaptureScreenshot}
-										disabled={isCapturing}
-										className="flex items-center gap-2 px-3 py-1.5 bg-white/10 text-white rounded text-sm hover:bg-white/20 disabled:opacity-50"
-									>
-										<Camera className="w-4 h-4" />
-										{isCapturing
-											? "Capturing..."
-											: screenshot
-												? "Recapture"
-												: "Capture"}
-									</button>
-								</div>
-								{screenshot && (
-									<div className="relative">
-										<img
-											src={screenshot}
-											alt="Screenshot preview"
-											className="w-full rounded-lg border border-white/10"
-										/>
-										<button
-											type="button"
-											onClick={() => setScreenshot(null)}
-											className="absolute top-2 right-2 p-1 bg-black/50 rounded-full text-white/70 hover:text-white"
-										>
-											<X className="w-4 h-4" />
-										</button>
-									</div>
+								<span className="text-sm font-medium text-gray-400">
+									Screenshot
+								</span>
+								{DeviceService.isMobileDevice() ? (
+									<p className="text-xs text-gray-500">
+										Take a screenshot on your device, then attach it to the
+										GitHub issue after submitting.
+									</p>
+								) : (
+									<>
+										<div className="flex items-center justify-end">
+											<button
+												type="button"
+												onClick={handleCaptureScreenshot}
+												disabled={isCapturing}
+												className="flex items-center gap-2 px-3 py-1.5 bg-white/10 text-white rounded text-sm hover:bg-white/20 disabled:opacity-50"
+											>
+												<Camera className="w-4 h-4" />
+												{isCapturing
+													? "Capturing..."
+													: screenshot
+														? "Recapture"
+														: "Capture"}
+											</button>
+										</div>
+										{screenshot && (
+											<div className="relative">
+												<img
+													src={screenshot}
+													alt="Screenshot preview"
+													className="w-full rounded-lg border border-white/10"
+												/>
+												<button
+													type="button"
+													onClick={() => setScreenshot(null)}
+													className="absolute top-2 right-2 p-1 bg-black/50 rounded-full text-white/70 hover:text-white"
+												>
+													<X className="w-4 h-4" />
+												</button>
+											</div>
+										)}
+										<p className="text-xs text-gray-500">
+											Your browser will ask which screen/tab to share. We'll
+											capture a single frame.
+										</p>
+									</>
 								)}
-								<p className="text-xs text-gray-500">
-									Your browser will ask which screen/tab to share. We'll capture
-									a single frame.
-								</p>
 							</div>
 
 							{/* Options */}

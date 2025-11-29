@@ -88,11 +88,10 @@ function buildIssueBody(
 `;
 	}
 
-	if (data.screenshot) {
-		const isMobile = DeviceService.isMobileDevice();
+	if (data.screenshot && !DeviceService.isMobileDevice()) {
 		body += `
 **Screenshot**
-_(Screenshot ${isMobile ? "was saved to your Photos - attach it here" : "is on your clipboard - paste it here with Ctrl+V / Cmd+V"})_
+_(Screenshot is on your clipboard - paste it here with Ctrl+V / Cmd+V)_
 `;
 	}
 
@@ -151,32 +150,16 @@ export function useBugReporter() {
 			issueUrl.searchParams.set("body", body);
 			issueUrl.searchParams.set("labels", "bug,from-app");
 
-			// Handle screenshot: on mobile, save to disk; on desktop, copy to clipboard
+			// Desktop: copy screenshot to clipboard if available
 			let hasScreenshotOnClipboard = false;
-			let screenshotSavedToDisk = false;
-			const isMobile = DeviceService.isMobileDevice();
-
-			if (data.screenshot) {
-				if (isMobile) {
-					// Mobile: prompt user to save screenshot to Photos
-					const shouldSave = window.confirm(
-						"Save screenshot to your Photos?\n\nYou can then attach it to the GitHub issue.",
-					);
-					if (shouldSave) {
-						const filename = `bug-screenshot-${Date.now()}.png`;
-						DeviceService.downloadDataUrl(data.screenshot, filename);
-						screenshotSavedToDisk = true;
-					}
-				} else {
-					// Desktop: copy to clipboard
-					hasScreenshotOnClipboard = await DeviceService.copyImageToClipboard(
-						data.screenshot,
-					);
-				}
+			if (data.screenshot && !DeviceService.isMobileDevice()) {
+				hasScreenshotOnClipboard = await DeviceService.copyImageToClipboard(
+					data.screenshot,
+				);
 			}
 
-			if (!hasScreenshotOnClipboard && !screenshotSavedToDisk) {
-				// Fallback: copy text if no screenshot
+			if (!hasScreenshotOnClipboard) {
+				// Fallback: copy text if no screenshot or on mobile
 				const clipboardText = `Title: ${data.title}\n\n${body}`;
 				await DeviceService.copyToClipboard(clipboardText);
 			}
@@ -184,7 +167,7 @@ export function useBugReporter() {
 			// Open GitHub in new tab
 			DeviceService.openInNewTab(issueUrl.toString());
 
-			return { success: true, hasScreenshotOnClipboard, screenshotSavedToDisk };
+			return { success: true, hasScreenshotOnClipboard };
 		} catch (error) {
 			console.error("Failed to submit bug report:", error);
 			return { success: false, error };
