@@ -1,14 +1,17 @@
-import { Github, Settings } from "lucide-react";
+import { Settings } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useBugReporter } from "../hooks/useBugReporter";
 import { useCamera } from "../hooks/useCamera";
 import { useEscapeKey } from "../hooks/useEscapeKey";
 import { useFlashDetector } from "../hooks/useFlashDetector";
 import { useMobileDetection } from "../hooks/useMobileDetection";
+import { useShakeDetector } from "../hooks/useShakeDetector";
 import { useSmartZoom } from "../hooks/useSmartZoom";
 import { useTimeMachine } from "../hooks/useTimeMachine";
 import { useVersionCheck } from "../hooks/useVersionCheck";
 import { DeviceService } from "../services/DeviceService";
 import type { SmoothingPreset } from "../smoothing";
+import { BugReportModal } from "./BugReportModal";
 import { HandSkeleton } from "./HandSkeleton";
 import { Minimap } from "./Minimap";
 import { SettingsModal } from "./SettingsModal";
@@ -248,6 +251,34 @@ export function CameraStage() {
 		lastCheckTime,
 	} = useVersionCheck();
 
+	// Bug Reporter
+	const bugReporter = useBugReporter();
+
+	// Shake detector for bug reporting
+	const {
+		isSupported: isShakeSupported,
+		requestPermission: requestShakePermission,
+	} = useShakeDetector({
+		enabled: bugReporter.shakeEnabled,
+		onShake: bugReporter.open,
+	});
+
+	// Detect platform for keyboard shortcut display
+	const isMac = navigator.platform.toUpperCase().indexOf("MAC") >= 0;
+	const bugReportShortcut = isMac ? "⌘I" : "Ctrl+I";
+
+	// Keyboard shortcut for bug reporting (Ctrl/Cmd + I)
+	useEffect(() => {
+		const handleKeyDown = (e: KeyboardEvent) => {
+			if ((e.ctrlKey || e.metaKey) && e.key === "i") {
+				e.preventDefault();
+				bugReporter.open();
+			}
+		};
+		window.addEventListener("keydown", handleKeyDown);
+		return () => window.removeEventListener("keydown", handleKeyDown);
+	}, [bugReporter]);
+
 	// Sync stream to video element
 	useEffect(() => {
 		if (videoRef.current) {
@@ -407,16 +438,22 @@ export function CameraStage() {
 				</>
 			)}
 
-			{/* GitHub Link */}
-			<a
-				href="https://github.com/idvorkin/magic-monitor"
-				target="_blank"
-				rel="noopener noreferrer"
-				className="absolute top-4 left-4 z-50 text-white/30 hover:text-white transition-colors"
-				title="View Source on GitHub"
-			>
-				<Github size={24} />
-			</a>
+			{/* Bug Report Modal */}
+			<BugReportModal
+				isOpen={bugReporter.isOpen}
+				onClose={bugReporter.close}
+				onOpen={bugReporter.open}
+				onSubmit={bugReporter.submit}
+				isSubmitting={bugReporter.isSubmitting}
+				defaultData={bugReporter.getDefaultData()}
+				shakeEnabled={bugReporter.shakeEnabled}
+				onShakeEnabledChange={bugReporter.setShakeEnabled}
+				isShakeSupported={isShakeSupported}
+				onRequestShakePermission={requestShakePermission}
+				isFirstTime={bugReporter.isFirstTime}
+				onFirstTimeShown={bugReporter.markFirstTimeShown}
+				shortcut={bugReportShortcut}
+			/>
 
 			<SettingsModal
 				isOpen={isSettingsOpen}
@@ -449,6 +486,12 @@ export function CameraStage() {
 				lastCheckTime={lastCheckTime}
 				onCheckForUpdate={checkForUpdate}
 				onReloadForUpdate={reloadForUpdate}
+				onReportBug={bugReporter.open}
+				shakeEnabled={bugReporter.shakeEnabled}
+				onShakeEnabledChange={bugReporter.setShakeEnabled}
+				isShakeSupported={isShakeSupported}
+				githubRepoUrl={bugReporter.githubRepoUrl}
+				bugReportShortcut={bugReportShortcut}
 			/>
 
 			{/* Delay Indicator Overlay */}

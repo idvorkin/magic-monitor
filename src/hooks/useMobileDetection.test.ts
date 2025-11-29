@@ -13,6 +13,16 @@ function createMockService(
 		addResizeListener: () => () => {},
 		getStorageItem: () => null,
 		setStorageItem: () => {},
+		hasDeviceMotion: () => false,
+		requestDeviceMotionPermission: async () => "denied",
+		addDeviceMotionListener: () => () => {},
+		copyToClipboard: async () => {},
+		openInNewTab: () => {},
+		getUserAgent: () => "test-agent",
+		getCurrentRoute: () => "/",
+		captureScreenshot: async () => null,
+		copyImageToClipboard: async () => false,
+		fetchLatestCommit: async () => null,
 		...overrides,
 	};
 }
