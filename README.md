@@ -1,23 +1,93 @@
-# Magic Monitor 🪄
+# Magic Monitor
 
-A smart mirror application designed for real-time feedback, featuring instant replay, AI-powered smart zoom, and flash detection.
+**[Try It Yourself →](https://magic-monitor.surge.sh)**
 
-## Architecture
+Turn your webcam into a magic practice mirror. Perfect your sleight of hand with instant replay and AI-powered hand tracking.
 
-### Component Hierarchy
+![Magic Monitor Screenshot](https://raw.githubusercontent.com/idvorkin/ipaste/main/20251129_151216.webp)
 
-```mermaid
-graph TD
-    App[App]
-    App --> CS[CameraStage]
-    CS --> SM[SettingsModal]
-    CS --> MM[Minimap]
-    CS --> TH[Thumbnail]
-    CS --> Video[video element]
-    CS --> Canvas[canvas element]
+## Features
+
+### Instant Replay
+
+Did you just nail that move? Or mess it up? Scrub back through the last 60 seconds to see exactly what happened. No need to set up recording ahead of time—it's always capturing.
+
+### Smart Zoom
+
+AI-powered hand tracking keeps you in frame automatically. Wave your hands and the camera follows. Great for close-up work on hand positions or gestures.
+
+### Minimap
+
+When zoomed in, a small picture-in-picture shows your full view so you never lose context.
+
+### Works Offline
+
+Install it like an app on your phone or desktop—then use it anywhere, even without internet.
+
+**On iPhone/iPad:** Tap the Share button → "Add to Home Screen"
+
+**On Android:** Tap the menu (⋮) → "Install app" or "Add to Home Screen"
+
+**On Desktop (Chrome/Edge):** Click the install icon in the address bar, or Menu → "Install Magic Monitor"
+
+Once installed, it works completely offline. Practice anywhere—no wifi needed.
+
+## Why Magicians Love It
+
+- **Catch your flashes** - Scrub frame-by-frame to spot moments where the secret is exposed
+- **Drill without stopping** - Keep practicing while the replay buffer captures everything
+- **Hands-free zoom** - Smart Zoom follows your hands automatically so you can focus on the move
+- **No setup required** - Just open the page and start practicing. No apps to install, no accounts to create
+- **Private by design** - Video stays on your device. Nothing is uploaded anywhere
+
+## Coming Soon
+
+- **Flash Detection** - AI that automatically flags frames where you might be flashing (showing something that should stay hidden)
+- **Angle Comparison** - Practice the same move from multiple camera angles
+
+## Getting Started
+
+1. Go to [magic-monitor.surge.sh](https://magic-monitor.surge.sh)
+2. Allow camera access when prompted
+3. Start practicing!
+
+**Controls:**
+
+- Scroll wheel to zoom in/out
+- Click and drag to pan when zoomed
+- Use the timeline at the bottom to scrub through replay
+- Toggle Smart Zoom with the hand icon
+
+---
+
+## For Developers
+
+<details>
+<summary>Architecture & Development</summary>
+
+### Tech Stack
+
+React 19 + TypeScript + Vite + Tailwind CSS
+
+### Local Development
+
+```bash
+npm install
+npm run dev
+# Open http://localhost:5173
 ```
 
-### Data Flow
+### Commands
+
+```bash
+just dev      # Run development server
+just build    # Build for production
+just test     # Run unit tests
+just e2e      # Run E2E tests (Playwright)
+just deploy   # Test, build, and deploy to surge.sh
+```
+
+### Architecture
 
 ```mermaid
 flowchart LR
@@ -46,73 +116,6 @@ flowchart LR
     Buffer -->|replay| Canvas[Canvas Element]
 ```
 
-### Hook Responsibilities
+See [CLAUDE.md](CLAUDE.md) for detailed development guidelines.
 
-```mermaid
-graph TB
-    subgraph useCamera
-        A1[Device enumeration]
-        A2[Stream lifecycle]
-        A3[Device switching]
-    end
-
-    subgraph useTimeMachine
-        B1[Frame capture at FPS]
-        B2[Buffer management]
-        B3[Playback controls]
-        B4[Thumbnail extraction]
-    end
-
-    subgraph useSmartZoom
-        C1[MediaPipe HandLandmarker]
-        C2[Bounding box calculation]
-        C3[Hysteresis/deadband]
-        C4[Smooth interpolation]
-    end
-    click C1 href "docs/SMART_ZOOM_SPEC.md" "Smart Zoom Specification"
-
-    subgraph useFlashDetector
-        D1[Color sampling]
-        D2[Threshold comparison]
-    end
-```
-
-## Features
-
-- **Instant Replay**: Rewind and scrub through the last 60 seconds of video.
-- **Smart Zoom**: AI-powered hand tracking automatically zooms and pans to keep you in frame.
-- **Minimap**: Always-on context view showing your full field of view when zoomed in.
-- **Flash Detection**: Visual alert when the screen flashes (e.g., for testing light sensors).
-- **High Quality Mode**: Toggle between performance (LQ) and high-fidelity (HQ) replay buffers.
-
-## Deployment
-
-The application is deployed to Surge.sh.
-
-**Live URL**: [https://magic-monitor.surge.sh](https://magic-monitor.surge.sh)
-
-### How to Deploy
-
-To deploy the latest version:
-
-```bash
-just deploy
-```
-
-This command builds the project and pushes it to Surge.
-
-## Local Development
-
-1.  Install dependencies:
-
-    ```bash
-    npm install
-    ```
-
-2.  Start the development server:
-
-    ```bash
-    npm run dev
-    ```
-
-3.  Open [http://localhost:5173](http://localhost:5173) in your browser.
+</details>
