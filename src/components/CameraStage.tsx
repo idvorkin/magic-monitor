@@ -37,6 +37,9 @@ export function CameraStage() {
 	// Mobile Detection
 	const { isMobile, isLowMemory } = useMobileDetection();
 
+	// Filmstrip expand/collapse state (collapsed by default on mobile)
+	const [expandFilmstrip, setExpandFilmstrip] = useState(false);
+
 	// Flash Detection State (persisted to localStorage)
 	const [flashEnabled, setFlashEnabledInternal] = useState(() => {
 		return DeviceService.getStorageItem(FLASH_ENABLED_STORAGE_KEY) === "true";
@@ -495,33 +498,41 @@ export function CameraStage() {
 			/>
 
 			{/* Controls Overlay */}
-			<div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col gap-4 items-center z-50 w-full max-w-4xl px-4">
+			<div
+				className={`absolute left-1/2 -translate-x-1/2 flex flex-col gap-4 items-center z-50 w-full max-w-4xl ${isMobile ? "bottom-0 px-0" : "bottom-8 px-4"}`}
+			>
 				{/* Replay Controls (when replaying) */}
 				{timeMachine.isReplaying && (
 					<div className="flex flex-col gap-2 w-full items-center">
-						<div className="bg-blue-900/80 backdrop-blur-md p-4 rounded-2xl flex items-center gap-4 w-full justify-center border border-blue-400 shadow-lg shadow-blue-900/50">
+						{/* Control bar - ultra compact on mobile */}
+						<div
+							className={`bg-blue-900/90 backdrop-blur-sm flex items-center justify-center ${isMobile ? "px-3 py-1 rounded-none gap-2 w-full" : "p-4 rounded-2xl gap-4"}`}
+						>
 							<button
 								onClick={timeMachine.exitReplay}
-								className="px-4 py-1 rounded font-bold bg-white/20 text-white hover:bg-white/30"
+								className={`rounded font-bold bg-white/20 text-white hover:bg-white/30 ${isMobile ? "px-2 py-0.5 text-[10px]" : "px-4 py-1 text-sm"}`}
 							>
-								EXIT REPLAY
+								✕
 							</button>
 
-							<button
-								onClick={handleDownloadDebugTrace}
-								className="px-3 py-1 rounded font-bold bg-yellow-600/80 text-white hover:bg-yellow-500 text-xs"
-								title="Download SmartZoom debug trace"
-							>
-								Debug Log
-							</button>
+							{/* Debug button - hidden on mobile */}
+							{!isMobile && (
+								<button
+									onClick={handleDownloadDebugTrace}
+									className="px-3 py-1 rounded font-bold bg-yellow-600/80 text-white hover:bg-yellow-500 text-xs"
+									title="Download SmartZoom debug trace"
+								>
+									Debug Log
+								</button>
+							)}
 
-							<div className="h-8 w-px bg-white/20 mx-2" />
+							{!isMobile && <div className="h-8 w-px bg-white/20 mx-2" />}
 
 							<button
 								onClick={
 									timeMachine.isPlaying ? timeMachine.pause : timeMachine.play
 								}
-								className="text-2xl w-10 h-10 flex items-center justify-center rounded-full hover:bg-white/10"
+								className={`flex items-center justify-center rounded-full hover:bg-white/10 flex-shrink-0 ${isMobile ? "text-base w-6 h-6" : "text-2xl w-10 h-10"}`}
 							>
 								{timeMachine.isPlaying ? "⏸️" : "▶️"}
 							</button>
@@ -535,134 +546,150 @@ export function CameraStage() {
 								onChange={(e) =>
 									timeMachine.seek(Number.parseFloat(e.target.value))
 								}
-								className="flex-1 accent-blue-400 h-2 rounded-full bg-blue-950"
+								className={`flex-1 min-w-[50px] accent-blue-400 rounded-full bg-blue-950 ${isMobile ? "h-1.5" : "h-2"}`}
 							/>
-							<span className="w-16 text-right font-mono text-sm">
-								{timeMachine.currentTime.toFixed(1)}s /{" "}
-								{timeMachine.totalTime.toFixed(1)}s
+							<span
+								className={`text-right font-mono flex-shrink-0 ${isMobile ? "w-8 text-[10px]" : "w-16 text-sm"}`}
+							>
+								{timeMachine.currentTime.toFixed(0)}s
 							</span>
+
+							{/* Filmstrip toggle button */}
+							<button
+								onClick={() => setExpandFilmstrip(!expandFilmstrip)}
+								className={`flex-shrink-0 hover:text-blue-300 transition-colors ${isMobile ? "text-sm" : "text-xl"}`}
+								title={expandFilmstrip ? "Hide timeline" : "Show timeline"}
+							>
+								{expandFilmstrip ? "▼" : "▲"}
+							</button>
 						</div>
 
-						{/* Filmstrip */}
-						<div className="flex gap-2 overflow-x-auto w-full pb-2 px-2 snap-x bg-black/40 backdrop-blur-sm rounded-xl p-2 border border-white/10">
-							{timeMachine.getThumbnails(10).map((thumb) => (
-								<Thumbnail
-									key={thumb.time}
-									frame={thumb.frame}
-									label={`${thumb.time.toFixed(1)}s`}
-									onClick={() => timeMachine.seek(thumb.time)}
-									isActive={Math.abs(timeMachine.currentTime - thumb.time) < 1}
-								/>
-							))}
+						{/* Collapsible Filmstrip */}
+						<div
+							className={`transition-all duration-300 overflow-hidden w-full ${
+								expandFilmstrip ? "max-h-40 opacity-100" : "max-h-0 opacity-0"
+							}`}
+						>
+							<div className="flex gap-2 overflow-x-auto w-full pb-2 px-2 snap-x bg-black/40 backdrop-blur-sm rounded-xl p-2 border border-white/10">
+								{timeMachine.getThumbnails(10).map((thumb) => (
+									<Thumbnail
+										key={thumb.time}
+										frame={thumb.frame}
+										label={`${thumb.time.toFixed(1)}s`}
+										onClick={() => timeMachine.seek(thumb.time)}
+										isActive={
+											Math.abs(timeMachine.currentTime - thumb.time) < 1
+										}
+									/>
+								))}
+							</div>
 						</div>
 					</div>
 				)}
 
-				{/* Main Controls Bar (Always Visible) */}
-				<div className="bg-black/50 backdrop-blur-md p-3 rounded-2xl flex items-center gap-3">
-					{/* Rewind Button (only when not replaying) */}
-					{!timeMachine.isReplaying && (
-						<>
-							<button
-								onClick={timeMachine.enterReplay}
-								className="px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-500 flex items-center gap-1.5"
-							>
-								<span>⏪</span> Rewind
-							</button>
-							<div className="h-6 w-px bg-white/20" />
-						</>
-					)}
+				{/* Main Controls Bar (Hidden during replay) */}
+				{!timeMachine.isReplaying && (
+					<div className="bg-black/50 backdrop-blur-md p-3 rounded-2xl flex items-center gap-3">
+						{/* Rewind Button */}
+						<button
+							onClick={timeMachine.enterReplay}
+							className="px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-500 flex items-center gap-1.5"
+						>
+							<span>⏪</span> Rewind
+						</button>
+						<div className="h-6 w-px bg-white/20" />
 
-					{/* Status Toggles */}
-					<button
-						onClick={() => setIsSmartZoom(!isSmartZoom)}
-						disabled={smartZoom.isModelLoading}
-						className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
-							isSmartZoom && !smartZoom.isModelLoading
-								? "bg-green-600 text-white"
-								: "bg-white/10 text-white/50 hover:bg-white/20 hover:text-white"
-						} ${smartZoom.isModelLoading ? "cursor-wait" : ""}`}
-						title="Smart Zoom - Auto-follow movement"
-					>
-						{smartZoom.isModelLoading
-							? "Loading..."
-							: isSmartZoom
-								? "Smart ✓"
-								: "Smart"}
-					</button>
-
-					<button
-						onClick={() => setFlashEnabled(!flashEnabled)}
-						className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
-							flashEnabled
-								? "bg-red-600 text-white"
-								: "bg-white/10 text-white/50 hover:bg-white/20 hover:text-white"
-						}`}
-						title="Flash Detection"
-					>
-						{flashEnabled ? "⚡ ARMED" : "⚡ Flash"}
-					</button>
-
-					<button
-						onClick={handleHQToggle}
-						className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
-							isHQ
-								? "bg-purple-600 text-white"
-								: isLowMemory
-									? "bg-orange-600/50 text-orange-200 hover:bg-orange-600/70"
+						{/* Status Toggles */}
+						<button
+							onClick={() => setIsSmartZoom(!isSmartZoom)}
+							disabled={smartZoom.isModelLoading}
+							className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+								isSmartZoom && !smartZoom.isModelLoading
+									? "bg-green-600 text-white"
 									: "bg-white/10 text-white/50 hover:bg-white/20 hover:text-white"
-						}`}
-						title={
-							isLowMemory
-								? "High Quality Mode (~3.5GB RAM) - Warning: May crash on this device"
-								: "High Quality Mode (~3.5GB RAM)"
-						}
-					>
-						{isLowMemory && !isHQ ? "⚠️ HQ" : "HQ"}
-					</button>
+							} ${smartZoom.isModelLoading ? "cursor-wait" : ""}`}
+							title="Smart Zoom - Auto-follow movement"
+						>
+							{smartZoom.isModelLoading
+								? "Loading..."
+								: isSmartZoom
+									? "Smart ✓"
+									: "Smart"}
+						</button>
 
-					{/* Zoom Controls - hidden on mobile (no mouse wheel) */}
-					{!isMobile && (
-						<>
-							<div className="h-6 w-px bg-white/20" />
-							<button
-								onClick={() => {
-									setZoom(1);
-									setPan({ x: 0, y: 0 });
-								}}
-								className="text-white font-bold px-3 py-1 rounded hover:bg-white/20 text-sm"
-							>
-								Reset
-							</button>
-							<input
-								type="range"
-								min="1"
-								max="5"
-								step="0.1"
-								value={zoom}
-								onChange={(e) => {
-									const newZoom = Number.parseFloat(e.target.value);
-									setZoom(newZoom);
-									setPan((prev) => clampPan(prev, newZoom));
-								}}
-								className="w-32 accent-blue-500"
-							/>
-							<span className="text-white font-mono w-12 text-right">
-								{zoom.toFixed(1)}x
-							</span>
-							<div className="h-6 w-px bg-white/20" />
-						</>
-					)}
+						<button
+							onClick={() => setFlashEnabled(!flashEnabled)}
+							className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+								flashEnabled
+									? "bg-red-600 text-white"
+									: "bg-white/10 text-white/50 hover:bg-white/20 hover:text-white"
+							}`}
+							title="Flash Detection"
+						>
+							{flashEnabled ? "⚡ ARMED" : "⚡ Flash"}
+						</button>
 
-					{/* Settings */}
-					<button
-						onClick={() => setIsSettingsOpen(true)}
-						className="p-1.5 rounded-lg text-white/50 hover:text-white hover:bg-white/10 transition-colors"
-						title="Settings"
-					>
-						<Settings size={18} />
-					</button>
-				</div>
+						<button
+							onClick={handleHQToggle}
+							className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+								isHQ
+									? "bg-purple-600 text-white"
+									: isLowMemory
+										? "bg-orange-600/50 text-orange-200 hover:bg-orange-600/70"
+										: "bg-white/10 text-white/50 hover:bg-white/20 hover:text-white"
+							}`}
+							title={
+								isLowMemory
+									? "High Quality Mode (~3.5GB RAM) - Warning: May crash on this device"
+									: "High Quality Mode (~3.5GB RAM)"
+							}
+						>
+							{isLowMemory && !isHQ ? "⚠️ HQ" : "HQ"}
+						</button>
+
+						{/* Zoom Controls - hidden on mobile (no mouse wheel) */}
+						{!isMobile && (
+							<>
+								<div className="h-6 w-px bg-white/20" />
+								<button
+									onClick={() => {
+										setZoom(1);
+										setPan({ x: 0, y: 0 });
+									}}
+									className="text-white font-bold px-3 py-1 rounded hover:bg-white/20 text-sm"
+								>
+									Reset
+								</button>
+								<input
+									type="range"
+									min="1"
+									max="5"
+									step="0.1"
+									value={zoom}
+									onChange={(e) => {
+										const newZoom = Number.parseFloat(e.target.value);
+										setZoom(newZoom);
+										setPan((prev) => clampPan(prev, newZoom));
+									}}
+									className="w-32 accent-blue-500"
+								/>
+								<span className="text-white font-mono w-12 text-right">
+									{zoom.toFixed(1)}x
+								</span>
+								<div className="h-6 w-px bg-white/20" />
+							</>
+						)}
+
+						{/* Settings */}
+						<button
+							onClick={() => setIsSettingsOpen(true)}
+							className="p-1.5 rounded-lg text-white/50 hover:text-white hover:bg-white/10 transition-colors"
+							title="Settings"
+						>
+							<Settings size={18} />
+						</button>
+					</div>
+				)}
 			</div>
 		</div>
 	);
