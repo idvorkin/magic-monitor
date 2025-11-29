@@ -517,7 +517,7 @@ export function CameraStage() {
 
 			{/* Controls Overlay */}
 			<div
-				className={`absolute left-1/2 -translate-x-1/2 flex flex-col gap-4 items-center z-50 w-full max-w-4xl ${isMobile ? "bottom-0 px-0" : "bottom-12 px-4"}`}
+				className={`absolute left-1/2 -translate-x-1/2 flex flex-col gap-4 items-center z-50 w-full max-w-4xl ${isMobile ? "bottom-3 px-0" : "bottom-12 px-4"}`}
 			>
 				{/* Replay Controls (when replaying) */}
 				{timeMachine.isReplaying && (
