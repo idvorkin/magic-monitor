@@ -4,6 +4,7 @@ import {
 	SMOOTHING_PRESET_LABELS,
 	type SmoothingPreset,
 } from "../smoothing";
+import { ToggleSwitch } from "./ToggleSwitch";
 
 interface SettingsModalProps {
 	isOpen: boolean;
@@ -168,14 +169,11 @@ export function SettingsModal({
 								Flip video horizontally
 							</div>
 						</div>
-						<button
-							onClick={() => onMirrorChange(!isMirror)}
-							className={`w-12 h-6 rounded-full transition-colors relative ${isMirror ? "bg-blue-600" : "bg-gray-700"}`}
-						>
-							<div
-								className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${isMirror ? "left-7" : "left-1"}`}
-							/>
-						</button>
+						<ToggleSwitch
+						checked={isMirror}
+						onChange={onMirrorChange}
+						color="blue"
+					/>
 					</div>
 
 					{/* Performance */}
@@ -193,14 +191,11 @@ export function SettingsModal({
 								)}
 							</div>
 						</div>
-						<button
-							onClick={handleHQToggle}
-							className={`w-12 h-6 rounded-full transition-colors relative ${isHQ ? "bg-purple-600" : isLowMemory ? "bg-orange-600/50" : "bg-gray-700"}`}
-						>
-							<div
-								className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${isHQ ? "left-7" : "left-1"}`}
-							/>
-						</button>
+						<ToggleSwitch
+						checked={isHQ}
+						onChange={() => handleHQToggle()}
+						color={isHQ ? "purple" : isLowMemory ? "orange" : "blue"}
+					/>
 					</div>
 
 					{/* Smart Zoom */}
@@ -209,15 +204,12 @@ export function SettingsModal({
 							<div className="text-white font-medium">Smart Zoom</div>
 							<div className="text-xs text-gray-500">Auto-follow movement</div>
 						</div>
-						<button
-							onClick={() => onSmartZoomChange(!isSmartZoom)}
-							disabled={isModelLoading}
-							className={`w-12 h-6 rounded-full transition-colors relative ${isSmartZoom ? "bg-green-600" : "bg-gray-700"} ${isModelLoading ? "opacity-50" : ""}`}
-						>
-							<div
-								className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${isSmartZoom ? "left-7" : "left-1"}`}
-							/>
-						</button>
+						<ToggleSwitch
+						checked={isSmartZoom}
+						onChange={onSmartZoomChange}
+						disabled={isModelLoading}
+						color="green"
+					/>
 					</div>
 
 					{/* Smoothing Algorithm (shown when Smart Zoom enabled) */}
@@ -260,15 +252,13 @@ export function SettingsModal({
 										Debug hand tracking
 									</div>
 								</div>
-								<button
-									onClick={() => onShowHandSkeletonChange(!showHandSkeleton)}
-									disabled={isModelLoading}
-									className={`w-10 h-5 rounded-full transition-colors relative ${showHandSkeleton ? "bg-yellow-600" : "bg-gray-700"} ${isModelLoading ? "opacity-50" : ""}`}
-								>
-									<div
-										className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${showHandSkeleton ? "left-5" : "left-0.5"}`}
-									/>
-								</button>
+								<ToggleSwitch
+								checked={showHandSkeleton}
+								onChange={onShowHandSkeletonChange}
+								disabled={isModelLoading}
+								color="yellow"
+								size="sm"
+							/>
 							</div>
 						</div>
 					)}
@@ -395,14 +385,11 @@ export function SettingsModal({
 										</div>
 									</div>
 								</div>
-								<button
-									onClick={() => onShakeEnabledChange(!shakeEnabled)}
-									className={`w-12 h-6 rounded-full transition-colors relative ${shakeEnabled ? "bg-orange-600" : "bg-gray-700"}`}
-								>
-									<div
-										className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${shakeEnabled ? "left-7" : "left-1"}`}
-									/>
-								</button>
+								<ToggleSwitch
+								checked={shakeEnabled}
+								onChange={onShakeEnabledChange}
+								color="orange"
+							/>
 							</div>
 						)}
 

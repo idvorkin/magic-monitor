@@ -1,4 +1,5 @@
 import { Settings } from "lucide-react";
+import { StatusButton } from "./StatusButton";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useBugReporter } from "../hooks/useBugReporter";
 import { useCamera } from "../hooks/useCamera";
@@ -661,14 +662,11 @@ export function CameraStage() {
 						<div className="h-6 w-px bg-white/20" />
 
 						{/* Status Toggles */}
-						<button
+						<StatusButton
 							onClick={() => setIsSmartZoom(!isSmartZoom)}
 							disabled={smartZoom.isModelLoading}
-							className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
-								isSmartZoom && !smartZoom.isModelLoading
-									? "bg-green-600 text-white"
-									: "bg-white/10 text-white/50 hover:bg-white/20 hover:text-white"
-							} ${smartZoom.isModelLoading ? "cursor-wait" : ""}`}
+							active={isSmartZoom && !smartZoom.isModelLoading}
+							color="green"
 							title="Smart Zoom - Auto-follow movement"
 						>
 							{smartZoom.isModelLoading
@@ -676,29 +674,22 @@ export function CameraStage() {
 								: isSmartZoom
 									? "Smart ✓"
 									: "Smart"}
-						</button>
+						</StatusButton>
 
-						<button
+						<StatusButton
 							onClick={() => setFlashEnabled(!flashEnabled)}
-							className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
-								flashEnabled
-									? "bg-red-600 text-white"
-									: "bg-white/10 text-white/50 hover:bg-white/20 hover:text-white"
-							}`}
+							active={flashEnabled}
+							color="red"
 							title="Flash Detection"
 						>
 							{flashEnabled ? "⚡ ARMED" : "⚡ Flash"}
-						</button>
+						</StatusButton>
 
-						<button
+						<StatusButton
 							onClick={handleHQToggle}
-							className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
-								isHQ
-									? "bg-purple-600 text-white"
-									: isLowMemory
-										? "bg-orange-600/50 text-orange-200 hover:bg-orange-600/70"
-										: "bg-white/10 text-white/50 hover:bg-white/20 hover:text-white"
-							}`}
+							active={isHQ}
+							color="purple"
+							warning={isLowMemory && !isHQ}
 							title={
 								isLowMemory
 									? "High Quality Mode (~3.5GB RAM) - Warning: May crash on this device"
@@ -706,7 +697,7 @@ export function CameraStage() {
 							}
 						>
 							{isLowMemory && !isHQ ? "⚠️ HQ" : "HQ"}
-						</button>
+						</StatusButton>
 
 						{/* Zoom Controls - hidden on mobile (no mouse wheel) */}
 						{!isMobile && (
