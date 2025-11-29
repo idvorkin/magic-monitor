@@ -85,6 +85,35 @@ React 19 + TypeScript + Vite + Tailwind CSS application for real-time camera mir
 - localStorage access (`getStorageItem`, `setStorageItem`)
 - Isolates window/navigator/localStorage calls for testability
 
+### Reusable UI Components (src/components/)
+
+**ToggleSwitch** - Consistent toggle switch for settings
+
+- Props: `checked`, `onChange`, `disabled`, `color`, `size`
+- Use instead of inline toggle button markup
+
+**StatusButton** - Status indicator buttons for control bars
+
+- Props: `children`, `onClick`, `active`, `disabled`, `color`, `title`, `warning`
+- Use instead of inline conditional button styling
+
+### CSS Conventions
+
+- Use `clsx` for conditional class composition instead of template literals
+- Extract repeated UI patterns into reusable components
+- When you see 3+ similar inline class patterns, create a component
+
+```tsx
+// Avoid: complex template literals
+className={`px-3 py-1.5 ${isActive ? "bg-green-600" : "bg-gray-700"} ${isDisabled ? "opacity-50" : ""}`}
+
+// Prefer: clsx for conditionals
+className={clsx("px-3 py-1.5", isActive ? "bg-green-600" : "bg-gray-700", isDisabled && "opacity-50")}
+
+// Best: extract to component when pattern repeats
+<StatusButton active={isActive} disabled={isDisabled} color="green">Label</StatusButton>
+```
+
 ## Development Conventions
 
 ### Clean Code Principles
