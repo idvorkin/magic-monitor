@@ -1,6 +1,10 @@
 import type { BugReportData, BugReportMetadata } from "../types/bugReport";
 import { GIT_COMMIT_URL, GIT_SHA_SHORT } from "../version";
 
+export function formatBuildLink(): string {
+	return `[${GIT_SHA_SHORT}](${GIT_COMMIT_URL})`;
+}
+
 export function formatDate(date: Date = new Date()): string {
 	return date.toLocaleDateString("en-US", {
 		month: "short",
@@ -20,7 +24,7 @@ export function buildDefaultDescription(
 
 	return `**Date:** ${date}
 
-**Build:** [${GIT_SHA_SHORT}](${GIT_COMMIT_URL})
+**Build:** ${formatBuildLink()}
 
 **What were you trying to do?**
 
@@ -89,4 +93,29 @@ export function getMetadata(
 		timestamp: currentDate.toISOString(),
 		appVersion: GIT_SHA_SHORT,
 	};
+}
+
+export function buildCrashReportBody(
+	error: Error,
+	metadata: BugReportMetadata,
+): string {
+	return `**Error:** ${error.message}
+
+**Build:** ${formatBuildLink()}
+
+**Stack Trace:**
+\`\`\`
+${error.stack || "No stack trace available"}
+\`\`\`
+
+---
+
+**App Metadata**
+| Field | Value |
+|-------|-------|
+| Route | \`${metadata.route}\` |
+| App Version | ${formatBuildLink()} |
+| Browser | \`${metadata.userAgent}\` |
+| Timestamp | \`${metadata.timestamp}\` |
+`;
 }
