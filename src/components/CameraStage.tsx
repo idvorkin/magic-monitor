@@ -2,12 +2,12 @@ import { Settings } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useBugReporter } from "../hooks/useBugReporter";
 import { useCamera } from "../hooks/useCamera";
+import { useDiskTimeMachine } from "../hooks/useDiskTimeMachine";
 import { useEscapeKey } from "../hooks/useEscapeKey";
 import { useFlashDetector } from "../hooks/useFlashDetector";
 import { useMobileDetection } from "../hooks/useMobileDetection";
 import { useShakeDetector } from "../hooks/useShakeDetector";
 import { useSmartZoom } from "../hooks/useSmartZoom";
-import { useTimeMachine } from "../hooks/useTimeMachine";
 import { useVersionCheck } from "../hooks/useVersionCheck";
 import { DeviceService } from "../services/DeviceService";
 import type { SmoothingPreset } from "../smoothing";
@@ -32,7 +32,6 @@ const MIRROR_STORAGE_KEY = "magic-monitor-mirror";
 export function CameraStage() {
 	const videoRef = useRef<HTMLVideoElement>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
-	const canvasRef = useRef<HTMLCanvasElement>(null);
 
 	// Zoom/Pan State
 	const [zoom, setZoom] = useState(1);
@@ -224,15 +223,17 @@ export function CameraStage() {
 		}
 	}, [isSmartZoom, smartZoom.zoom, smartZoom.pan]);
 
-	// Time Machine State
-	// We always enable recording in the background for "Instant Replay" capability
-	const timeMachine = useTimeMachine({
+	// Time Machine State (Disk-based for mobile support and full resolution)
+	// 2-second chunks, 30 chunks max = 60 seconds buffer
+	const timeMachine = useDiskTimeMachine({
 		videoRef,
 		enabled: true,
-		bufferSeconds: 60,
-		fps: isHQ ? 30 : 15,
-		quality: isHQ ? 0.5 : 0.35,
+		chunkDurationMs: 2000,
+		maxChunks: 30,
 	});
+
+	// Ref for the replay video element (disk-based playback)
+	const replayVideoRef = useRef<HTMLVideoElement>(null);
 
 	const isFlashing = useFlashDetector({
 		videoRef,
@@ -289,17 +290,25 @@ export function CameraStage() {
 		}
 	}, [stream]);
 
-	// Render replay frame to canvas
+	// Sync replay video from disk time machine
 	useEffect(() => {
-		if (timeMachine.isReplaying && timeMachine.frame && canvasRef.current) {
-			const ctx = canvasRef.current.getContext("2d");
-			if (ctx) {
-				canvasRef.current.width = timeMachine.frame.width;
-				canvasRef.current.height = timeMachine.frame.height;
-				ctx.drawImage(timeMachine.frame, 0, 0);
+		if (timeMachine.isReplaying && replayVideoRef.current) {
+			// Get the playback video from the hook
+			const playbackVideo = timeMachine.getPlaybackVideo();
+			if (playbackVideo?.src) {
+				// Copy the src to our visible replay video element
+				if (replayVideoRef.current.src !== playbackVideo.src) {
+					replayVideoRef.current.src = playbackVideo.src;
+				}
+				// Sync play/pause state
+				if (timeMachine.isPlaying && replayVideoRef.current.paused) {
+					replayVideoRef.current.play().catch(console.error);
+				} else if (!timeMachine.isPlaying && !replayVideoRef.current.paused) {
+					replayVideoRef.current.pause();
+				}
 			}
 		}
-	}, [timeMachine.frame, timeMachine.isReplaying]);
+	}, [timeMachine.isReplaying, timeMachine.isPlaying, timeMachine]);
 
 	// Escape key handler
 	useEscapeKey({
@@ -515,7 +524,7 @@ export function CameraStage() {
 				stream={stream}
 				zoom={zoom}
 				pan={pan}
-				frame={timeMachine.isReplaying ? timeMachine.frame : null}
+				frame={null}
 				onPanTo={handlePanTo}
 			/>
 
@@ -526,7 +535,14 @@ export function CameraStage() {
 						Loading AI model...
 					</span>
 				)}
-				<span>RAM: {timeMachine.memoryUsageMB} MB</span>
+				{timeMachine.recordingError ? (
+					<span className="text-red-400">{timeMachine.recordingError}</span>
+				) : (
+					<span>
+						{timeMachine.isRecording ? "REC" : ""} {timeMachine.chunkCount}/30
+						chunks ({timeMachine.totalDuration.toFixed(0)}s)
+					</span>
+				)}
 			</div>
 
 			{error && (
@@ -558,9 +574,11 @@ export function CameraStage() {
 				/>
 			)}
 
-			{/* Replay Canvas */}
-			<canvas
-				ref={canvasRef}
+			{/* Replay Video (disk-based playback) */}
+			<video
+				ref={replayVideoRef}
+				muted
+				playsInline
 				className={`max-w-full max-h-full object-contain transition-transform duration-75 ease-out ${timeMachine.isReplaying ? "block" : "hidden"}`}
 				style={{
 					transform: getVideoTransform(),
@@ -607,22 +625,66 @@ export function CameraStage() {
 								{timeMachine.isPlaying ? "⏸️" : "▶️"}
 							</button>
 
+							{/* Prev/Next chunk buttons for coarse navigation */}
+							<button
+								onClick={timeMachine.prevChunk}
+								className={`hover:bg-white/10 rounded ${isMobile ? "text-sm px-1" : "text-lg px-2"}`}
+								title="Previous chunk"
+							>
+								⏮
+							</button>
+
 							<input
 								type="range"
 								min="0"
-								max={timeMachine.totalTime || 1}
-								step="0.1"
-								value={timeMachine.currentTime}
+								max={Math.max(timeMachine.chunkCount - 1, 0)}
+								step="1"
+								value={timeMachine.currentChunkIndex}
 								onChange={(e) =>
-									timeMachine.seek(Number.parseFloat(e.target.value))
+									timeMachine.seekToChunk(Number.parseInt(e.target.value, 10))
 								}
 								className={`flex-1 min-w-[50px] accent-blue-400 rounded-full bg-blue-950 ${isMobile ? "h-1.5" : "h-2"}`}
 							/>
+
+							<button
+								onClick={timeMachine.nextChunk}
+								className={`hover:bg-white/10 rounded ${isMobile ? "text-sm px-1" : "text-lg px-2"}`}
+								title="Next chunk"
+							>
+								⏭
+							</button>
+
 							<span
 								className={`text-right font-mono flex-shrink-0 ${isMobile ? "w-8 text-[10px]" : "w-16 text-sm"}`}
 							>
 								{timeMachine.currentTime.toFixed(0)}s
 							</span>
+
+							{/* Save video button */}
+							{!isMobile && (
+								<button
+									onClick={timeMachine.saveVideo}
+									disabled={timeMachine.isExporting}
+									className={`px-3 py-1 rounded font-bold text-white text-xs ${
+										timeMachine.isExporting
+											? "bg-yellow-600/80 cursor-wait"
+											: "bg-green-600/80 hover:bg-green-500"
+									}`}
+									title={
+										timeMachine.isExporting
+											? "Exporting video..."
+											: timeMachine.isFFmpegReady
+												? "Download replay video"
+												: "Download replay (first save downloads ~2MB encoder)"
+									}
+								>
+									{timeMachine.isExporting
+										? `⏳ ${Math.round(timeMachine.exportProgress * 100)}%`
+										: timeMachine.isFFmpegReady
+											? "💾 Save"
+											: "💾 Save*"}
+								</button>
+							)}
 
 							{/* Filmstrip toggle button */}
 							<button
@@ -641,15 +703,13 @@ export function CameraStage() {
 							}`}
 						>
 							<div className="flex gap-2 overflow-x-auto w-full pb-2 px-2 snap-x bg-black/40 backdrop-blur-sm rounded-xl p-2 border border-white/10">
-								{timeMachine.getThumbnails(10).map((thumb) => (
+								{timeMachine.previews.map((preview, index) => (
 									<Thumbnail
-										key={thumb.time}
-										frame={thumb.frame}
-										label={`${thumb.time.toFixed(1)}s`}
-										onClick={() => timeMachine.seek(thumb.time)}
-										isActive={
-											Math.abs(timeMachine.currentTime - thumb.time) < 1
-										}
+										key={preview.id}
+										imageUrl={preview.preview}
+										label={`${(index * 2).toFixed(0)}s`}
+										onClick={() => timeMachine.seekToChunk(index)}
+										isActive={timeMachine.currentChunkIndex === index}
 									/>
 								))}
 							</div>

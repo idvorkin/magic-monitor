@@ -1,4 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
+import { seedRewindBuffer } from "./helpers/seedRewindBuffer";
 
 // Declare the mock helper types for TypeScript
 declare global {
@@ -209,10 +210,15 @@ test.describe("Magic Monitor E2E", () => {
 		}
 	});
 
-	test("Time Machine: Enter and Exit Replay", async ({ page }) => {
-		// Wait a bit for "buffer" to fill (simulated)
-		// Wait for RAM usage to show non-zero (matches any number starting with 1-9)
-		await expect(page.getByText(/RAM: \d+ MB/)).toBeVisible({
+	test("Time Machine: Enter and Exit Replay (Disk Mode)", async ({ page }) => {
+		// Seed the IndexedDB with test chunks
+		await seedRewindBuffer(page, 5);
+
+		// Reload to pick up the seeded data
+		await page.reload();
+
+		// Wait for chunk count to show (disk mode shows chunks, not RAM)
+		await expect(page.getByText(/\d+\/30 chunks/)).toBeVisible({
 			timeout: 15000,
 		});
 
@@ -222,13 +228,45 @@ test.describe("Magic Monitor E2E", () => {
 		// Verify Replay UI
 		await expect(page.getByText("REPLAY MODE")).toBeVisible();
 
-		// Video should be hidden, Canvas visible
+		// Video should be hidden, replay video visible
 		await expect(page.getByTestId("main-video")).toBeHidden();
-		await expect(page.locator("canvas").first()).toBeVisible();
 
 		// Exit Replay (button shows ✕)
 		await page.locator("button", { hasText: "✕" }).click();
-		await expect(page.getByText("Rewind")).toBeVisible();
+
+		// Wait for replay mode to exit - the main controls bar should reappear
+		await expect(page.getByText("REPLAY MODE")).toBeHidden({ timeout: 5000 });
+		await expect(page.getByText("Rewind")).toBeVisible({ timeout: 5000 });
 		await expect(page.getByTestId("main-video")).toBeVisible();
+	});
+
+	test("Time Machine: Thumbnails appear in replay", async ({ page }) => {
+		// Seed with 5 chunks
+		await seedRewindBuffer(page, 5);
+		await page.reload();
+
+		// Wait for recording indicator
+		await expect(page.getByText(/\d+\/30 chunks/)).toBeVisible({
+			timeout: 15000,
+		});
+
+		// Enter replay
+		await page.getByText("Rewind").click();
+		await expect(page.getByText("REPLAY MODE")).toBeVisible();
+
+		// Expand filmstrip
+		await page.locator("button", { hasText: "▲" }).click();
+
+		// Verify thumbnails are visible (5 chunks = 5 thumbnails)
+		// Thumbnails have alt text like "0s", "2s", "4s" etc
+		const thumbnails = page.locator("img[alt$='s']");
+		await expect(thumbnails).toHaveCount(5);
+
+		// Click a thumbnail to seek
+		await thumbnails.nth(2).click();
+
+		// Exit replay
+		await page.locator("button", { hasText: "✕" }).click();
+		await expect(page.getByText("REPLAY MODE")).toBeHidden({ timeout: 5000 });
 	});
 });
