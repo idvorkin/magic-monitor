@@ -2,12 +2,12 @@ import { Settings } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useBugReporter } from "../hooks/useBugReporter";
 import { useCamera } from "../hooks/useCamera";
+import { useDiskTimeMachine } from "../hooks/useDiskTimeMachine";
 import { useEscapeKey } from "../hooks/useEscapeKey";
 import { useFlashDetector } from "../hooks/useFlashDetector";
 import { useMobileDetection } from "../hooks/useMobileDetection";
 import { useShakeDetector } from "../hooks/useShakeDetector";
 import { useSmartZoom } from "../hooks/useSmartZoom";
-import { useTimeMachine } from "../hooks/useTimeMachine";
 import { useVersionCheck } from "../hooks/useVersionCheck";
 import { DeviceService } from "../services/DeviceService";
 import type { SmoothingPreset } from "../smoothing";
@@ -21,7 +21,6 @@ import { Thumbnail } from "./Thumbnail";
 
 // Storage keys for persisted settings
 const SMOOTHING_PRESET_STORAGE_KEY = "magic-monitor-smoothing-preset";
-const HQ_STORAGE_KEY = "magic-monitor-hq";
 const SMART_ZOOM_STORAGE_KEY = "magic-monitor-smart-zoom";
 const SHOW_HAND_SKELETON_STORAGE_KEY = "magic-monitor-show-hand-skeleton";
 const FLASH_ENABLED_STORAGE_KEY = "magic-monitor-flash-enabled";
@@ -32,7 +31,6 @@ const MIRROR_STORAGE_KEY = "magic-monitor-mirror";
 export function CameraStage() {
 	const videoRef = useRef<HTMLVideoElement>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
-	const canvasRef = useRef<HTMLCanvasElement>(null);
 
 	// Zoom/Pan State
 	const [zoom, setZoom] = useState(1);
@@ -41,7 +39,7 @@ export function CameraStage() {
 	const [lastMousePos, setLastMousePos] = useState({ x: 0, y: 0 });
 
 	// Mobile Detection
-	const { isMobile, isLowMemory } = useMobileDetection();
+	const { isMobile } = useMobileDetection();
 
 	// Filmstrip expand/collapse state (collapsed by default on mobile)
 	const [expandFilmstrip, setExpandFilmstrip] = useState(false);
@@ -74,17 +72,6 @@ export function CameraStage() {
 		return 20;
 	});
 	const [isPickingColor, setIsPickingColor] = useState(false);
-
-	// HQ Mode State (persisted to localStorage)
-	const [isHQ, setIsHQInternal] = useState(() => {
-		const stored = DeviceService.getStorageItem(HQ_STORAGE_KEY);
-		if (stored !== null) return stored === "true";
-		return false; // Default off, will enable on desktop after detection if no stored preference
-	});
-	const [hqInitialized, setHqInitialized] = useState(() => {
-		// If we have a stored preference, consider it already initialized
-		return DeviceService.getStorageItem(HQ_STORAGE_KEY) !== null;
-	});
 
 	// Smart Zoom State (persisted to localStorage)
 	const [isSmartZoom, setIsSmartZoomInternal] = useState(() => {
@@ -123,11 +110,6 @@ export function CameraStage() {
 	const setSmoothingPreset = useCallback((preset: SmoothingPreset) => {
 		setSmoothingPresetInternal(preset);
 		DeviceService.setStorageItem(SMOOTHING_PRESET_STORAGE_KEY, preset);
-	}, []);
-
-	const setIsHQ = useCallback((value: boolean) => {
-		setIsHQInternal(value);
-		DeviceService.setStorageItem(HQ_STORAGE_KEY, String(value));
 	}, []);
 
 	const setIsSmartZoom = useCallback((value: boolean) => {
@@ -170,27 +152,6 @@ export function CameraStage() {
 		DeviceService.setStorageItem(MIRROR_STORAGE_KEY, String(value));
 	}, []);
 
-	// Initialize HQ based on device detection (once, only if no stored preference)
-	useEffect(() => {
-		if (!hqInitialized) {
-			setIsHQ(!isLowMemory);
-			setHqInitialized(true);
-		}
-	}, [hqInitialized, isLowMemory, setIsHQ]);
-
-	// HQ toggle with mobile warning
-	const handleHQToggle = useCallback(() => {
-		if (!isHQ && isLowMemory) {
-			const proceed = window.confirm(
-				isMobile
-					? "High Quality mode uses ~3.5GB RAM and may crash your mobile device. Continue anyway?"
-					: "High Quality mode uses ~3.5GB RAM. Your device has limited memory. Continue anyway?",
-			);
-			if (!proceed) return;
-		}
-		setIsHQ(!isHQ);
-	}, [isHQ, isLowMemory, isMobile, setIsHQ]);
-
 	// Helper to clamp NORMALIZED pan values (resolution-independent)
 	// See docs/SMART_ZOOM_SPEC.md: maxPan = (1 - 1/zoom) / 2
 	const clampPan = useCallback((p: { x: number; y: number }, z: number) => {
@@ -224,15 +185,17 @@ export function CameraStage() {
 		}
 	}, [isSmartZoom, smartZoom.zoom, smartZoom.pan]);
 
-	// Time Machine State
-	// We always enable recording in the background for "Instant Replay" capability
-	const timeMachine = useTimeMachine({
+	// Time Machine State (Disk-based for mobile support and full resolution)
+	// 2-second chunks, 30 chunks max = 60 seconds buffer
+	const timeMachine = useDiskTimeMachine({
 		videoRef,
 		enabled: true,
-		bufferSeconds: 60,
-		fps: isHQ ? 30 : 15,
-		quality: isHQ ? 0.5 : 0.35,
+		chunkDurationMs: 2000,
+		maxChunks: 30,
 	});
+
+	// Ref for the replay video element (disk-based playback)
+	const replayVideoRef = useRef<HTMLVideoElement>(null);
 
 	const isFlashing = useFlashDetector({
 		videoRef,
@@ -289,17 +252,25 @@ export function CameraStage() {
 		}
 	}, [stream]);
 
-	// Render replay frame to canvas
+	// Sync replay video from disk time machine
 	useEffect(() => {
-		if (timeMachine.isReplaying && timeMachine.frame && canvasRef.current) {
-			const ctx = canvasRef.current.getContext("2d");
-			if (ctx) {
-				canvasRef.current.width = timeMachine.frame.width;
-				canvasRef.current.height = timeMachine.frame.height;
-				ctx.drawImage(timeMachine.frame, 0, 0);
+		if (timeMachine.isReplaying && replayVideoRef.current) {
+			// Get the playback video from the hook
+			const playbackVideo = timeMachine.getPlaybackVideo();
+			if (playbackVideo?.src) {
+				// Copy the src to our visible replay video element
+				if (replayVideoRef.current.src !== playbackVideo.src) {
+					replayVideoRef.current.src = playbackVideo.src;
+				}
+				// Sync play/pause state
+				if (timeMachine.isPlaying && replayVideoRef.current.paused) {
+					replayVideoRef.current.play().catch(console.error);
+				} else if (!timeMachine.isPlaying && !replayVideoRef.current.paused) {
+					replayVideoRef.current.pause();
+				}
 			}
 		}
-	}, [timeMachine.frame, timeMachine.isReplaying]);
+	}, [timeMachine.isReplaying, timeMachine.isPlaying, timeMachine]);
 
 	// Escape key handler
 	useEscapeKey({
@@ -466,10 +437,6 @@ export function CameraStage() {
 				onDeviceChange={setSelectedDeviceId}
 				isMirror={isMirror}
 				onMirrorChange={setIsMirror}
-				isHQ={isHQ}
-				onHQChange={setIsHQ}
-				isLowMemory={isLowMemory}
-				isMobile={isMobile}
 				isSmartZoom={isSmartZoom}
 				isModelLoading={smartZoom.isModelLoading}
 				onSmartZoomChange={setIsSmartZoom}
@@ -515,7 +482,7 @@ export function CameraStage() {
 				stream={stream}
 				zoom={zoom}
 				pan={pan}
-				frame={timeMachine.isReplaying ? timeMachine.frame : null}
+				frame={null}
 				onPanTo={handlePanTo}
 			/>
 
@@ -526,7 +493,14 @@ export function CameraStage() {
 						Loading AI model...
 					</span>
 				)}
-				<span>RAM: {timeMachine.memoryUsageMB} MB</span>
+				{timeMachine.recordingError ? (
+					<span className="text-red-400">{timeMachine.recordingError}</span>
+				) : (
+					<span>
+						{timeMachine.isRecording ? "REC" : ""} {timeMachine.chunkCount}{" "}
+						chunks ({timeMachine.totalDuration.toFixed(0)}s)
+					</span>
+				)}
 			</div>
 
 			{error && (
@@ -558,9 +532,11 @@ export function CameraStage() {
 				/>
 			)}
 
-			{/* Replay Canvas */}
-			<canvas
-				ref={canvasRef}
+			{/* Replay Video (disk-based playback) */}
+			<video
+				ref={replayVideoRef}
+				muted
+				playsInline
 				className={`max-w-full max-h-full object-contain transition-transform duration-75 ease-out ${timeMachine.isReplaying ? "block" : "hidden"}`}
 				style={{
 					transform: getVideoTransform(),
@@ -607,22 +583,58 @@ export function CameraStage() {
 								{timeMachine.isPlaying ? "⏸️" : "▶️"}
 							</button>
 
+							{/* Prev/Next chunk buttons for coarse navigation */}
+							<button
+								onClick={timeMachine.prevChunk}
+								className={`hover:bg-white/10 rounded ${isMobile ? "text-sm px-1" : "text-lg px-2"}`}
+								title="Previous chunk"
+							>
+								⏮
+							</button>
+
 							<input
 								type="range"
 								min="0"
-								max={timeMachine.totalTime || 1}
-								step="0.1"
-								value={timeMachine.currentTime}
+								max={Math.max(timeMachine.chunkCount - 1, 0)}
+								step="1"
+								value={timeMachine.currentChunkIndex}
 								onChange={(e) =>
-									timeMachine.seek(Number.parseFloat(e.target.value))
+									timeMachine.seekToChunk(Number.parseInt(e.target.value, 10))
 								}
 								className={`flex-1 min-w-[50px] accent-blue-400 rounded-full bg-blue-950 ${isMobile ? "h-1.5" : "h-2"}`}
 							/>
+
+							<button
+								onClick={timeMachine.nextChunk}
+								className={`hover:bg-white/10 rounded ${isMobile ? "text-sm px-1" : "text-lg px-2"}`}
+								title="Next chunk"
+							>
+								⏭
+							</button>
+
 							<span
 								className={`text-right font-mono flex-shrink-0 ${isMobile ? "w-8 text-[10px]" : "w-16 text-sm"}`}
 							>
 								{timeMachine.currentTime.toFixed(0)}s
 							</span>
+
+							{/* Save video button */}
+							{!isMobile && (
+								<button
+									onClick={timeMachine.saveVideo}
+									disabled={timeMachine.isExporting}
+									className={`px-3 py-1 rounded font-bold text-white text-xs ${
+										timeMachine.isExporting
+											? "bg-yellow-600/80 cursor-wait"
+											: "bg-green-600/80 hover:bg-green-500"
+									}`}
+									title="Download replay video (may need VLC to play)"
+								>
+									{timeMachine.isExporting
+										? `⏳ ${Math.round(timeMachine.exportProgress * 100)}%`
+										: "💾 Save"}
+								</button>
+							)}
 
 							{/* Filmstrip toggle button */}
 							<button
@@ -634,24 +646,124 @@ export function CameraStage() {
 							</button>
 						</div>
 
-						{/* Collapsible Filmstrip */}
+						{/* Collapsible Filmstrip - Cinematic Timeline */}
 						<div
-							className={`transition-all duration-300 overflow-hidden w-full ${
-								expandFilmstrip ? "max-h-40 opacity-100" : "max-h-0 opacity-0"
+							className={`transition-all duration-500 ease-out overflow-hidden w-full ${
+								expandFilmstrip ? "opacity-100" : "max-h-0 opacity-0"
 							}`}
+							style={{
+								maxHeight: expandFilmstrip ? (isMobile ? "28vh" : "35vh") : "0",
+								paddingBottom: isMobile ? "max(env(safe-area-inset-bottom), 20px)" : "0",
+							}}
 						>
-							<div className="flex gap-2 overflow-x-auto w-full pb-2 px-2 snap-x bg-black/40 backdrop-blur-sm rounded-xl p-2 border border-white/10">
-								{timeMachine.getThumbnails(10).map((thumb) => (
-									<Thumbnail
-										key={thumb.time}
-										frame={thumb.frame}
-										label={`${thumb.time.toFixed(1)}s`}
-										onClick={() => timeMachine.seek(thumb.time)}
-										isActive={
-											Math.abs(timeMachine.currentTime - thumb.time) < 1
-										}
-									/>
-								))}
+							<div
+								className="relative flex gap-4 overflow-x-auto w-full py-4 px-4 snap-x snap-mandatory h-full"
+								style={{
+									background:
+										"linear-gradient(180deg, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.98) 100%)",
+									boxShadow: "inset 0 1px 0 rgba(255,255,255,0.05)",
+								}}
+							>
+								{/* Film grain texture overlay */}
+								<div
+									className="absolute inset-0 pointer-events-none opacity-20"
+									style={{
+										backgroundImage:
+											"url(\"data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E\")",
+										backgroundSize: "200px 200px",
+									}}
+								/>
+
+								{timeMachine.previews
+									.filter((_, index) => index % 4 === 0)
+									.slice(0, 8)
+									.map((preview, displayIndex) => {
+										const actualIndex = displayIndex * 4;
+										const isActive =
+											timeMachine.currentChunkIndex === actualIndex;
+										return (
+											<div
+												key={preview.id}
+												className="flex-shrink-0 snap-center relative group"
+												style={{
+													animationDelay: `${displayIndex * 50}ms`,
+													animation: expandFilmstrip
+														? "slideInUp 0.4s ease-out forwards"
+														: "none",
+													opacity: expandFilmstrip ? 1 : 0,
+													minWidth: isMobile ? "100px" : "160px",
+												}}
+											>
+												{/* Timestamp badge */}
+												<div
+													className="absolute -top-2 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded text-xs font-mono tracking-wider z-10 whitespace-nowrap"
+													style={{
+														background: isActive
+															? "linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)"
+															: "rgba(0,0,0,0.8)",
+														color: isActive ? "#fff" : "#94a3b8",
+														border: isActive
+															? "1px solid rgba(59, 130, 246, 0.5)"
+															: "1px solid rgba(148, 163, 184, 0.2)",
+														fontSize: isMobile ? "10px" : "11px",
+														fontWeight: isActive ? "600" : "400",
+														textShadow: isActive
+															? "0 0 8px rgba(59, 130, 246, 0.5)"
+															: "none",
+													}}
+												>
+													{`${(actualIndex * 2).toFixed(0)}s`}
+												</div>
+
+												{/* Thumbnail with cinematic treatment */}
+												<div
+													className={`relative cursor-pointer transition-all duration-300 ${
+														isActive ? "scale-105" : "scale-100"
+													} hover:scale-105`}
+													onClick={() => timeMachine.seekToChunk(actualIndex)}
+													style={{
+														width: isMobile ? "100px" : "160px",
+														height: isMobile ? "56px" : "90px",
+														filter: isActive
+															? "brightness(1.1) contrast(1.05)"
+															: "brightness(0.85) contrast(0.95)",
+														boxShadow: isActive
+															? "0 0 0 2px #3b82f6, 0 0 20px rgba(59, 130, 246, 0.6), 0 8px 16px rgba(0,0,0,0.4)"
+															: "0 2px 8px rgba(0,0,0,0.3)",
+													}}
+												>
+													<Thumbnail
+														imageUrl={preview.preview}
+														onClick={() => {}}
+														isActive={false}
+													/>
+
+													{/* Active indicator overlay */}
+													{isActive && (
+														<div
+															className="absolute inset-0 pointer-events-none"
+															style={{
+																background:
+																	"linear-gradient(180deg, rgba(59, 130, 246, 0.15) 0%, rgba(37, 99, 235, 0.15) 100%)",
+																border: "2px solid rgba(59, 130, 246, 0.8)",
+																borderRadius: "0.375rem",
+															}}
+														/>
+													)}
+												</div>
+
+												{/* Hover state glow */}
+												<div
+													className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
+													style={{
+														background:
+															"radial-gradient(circle at center, rgba(59, 130, 246, 0.2) 0%, transparent 70%)",
+														filter: "blur(8px)",
+													}}
+												/>
+											</div>
+										);
+									})}
 							</div>
 						</div>
 					</div>
@@ -691,20 +803,6 @@ export function CameraStage() {
 							title="Flash Detection"
 						>
 							{flashEnabled ? "⚡ ARMED" : "⚡ Flash"}
-						</StatusButton>
-
-						<StatusButton
-							onClick={handleHQToggle}
-							active={isHQ}
-							color="purple"
-							warning={isLowMemory && !isHQ}
-							title={
-								isLowMemory
-									? "High Quality Mode (~3.5GB RAM) - Warning: May crash on this device"
-									: "High Quality Mode (~3.5GB RAM)"
-							}
-						>
-							{isLowMemory && !isHQ ? "⚠️ HQ" : "HQ"}
 						</StatusButton>
 
 						{/* Zoom Controls - hidden on mobile (no mouse wheel) */}
