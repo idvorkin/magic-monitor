@@ -8,6 +8,11 @@ import {
 	DiskBufferService,
 	type DiskBufferServiceType,
 } from "../services/DiskBufferService";
+import {
+	MediaRecorderService,
+	type MediaRecorderServiceType,
+	type RecordingSession,
+} from "../services/MediaRecorderService";
 
 // ===== Types =====
 
@@ -19,6 +24,7 @@ export interface DiskTimeMachineConfig {
 	// Dependency injection for testing
 	diskBufferService?: DiskBufferServiceType;
 	deviceService?: DeviceServiceType;
+	mediaRecorderService?: MediaRecorderServiceType;
 }
 
 export interface DiskTimeMachineControls {
@@ -49,58 +55,6 @@ export interface DiskTimeMachineControls {
 	getPlaybackVideo: () => HTMLVideoElement | null;
 }
 
-// ===== Utility functions =====
-
-/**
- * Extract the first frame of a video blob as a JPEG data URL.
- */
-async function extractPreviewFrame(blob: Blob): Promise<string> {
-	return new Promise((resolve, reject) => {
-		const video = document.createElement("video");
-		video.muted = true;
-		video.playsInline = true;
-
-		const blobUrl = URL.createObjectURL(blob);
-		video.src = blobUrl;
-
-		video.onloadeddata = () => {
-			// Seek to the beginning to ensure we get the first frame
-			video.currentTime = 0;
-		};
-
-		video.onseeked = () => {
-			try {
-				const canvas = document.createElement("canvas");
-				canvas.width = video.videoWidth;
-				canvas.height = video.videoHeight;
-
-				const ctx = canvas.getContext("2d");
-				if (!ctx) {
-					URL.revokeObjectURL(blobUrl);
-					reject(new Error("Could not get canvas context"));
-					return;
-				}
-
-				ctx.drawImage(video, 0, 0);
-				const dataUrl = canvas.toDataURL("image/jpeg", 0.7);
-
-				URL.revokeObjectURL(blobUrl);
-				resolve(dataUrl);
-			} catch (err) {
-				URL.revokeObjectURL(blobUrl);
-				reject(err);
-			}
-		};
-
-		video.onerror = () => {
-			URL.revokeObjectURL(blobUrl);
-			reject(new Error("Failed to load video for preview extraction"));
-		};
-
-		video.load();
-	});
-}
-
 // ===== Hook implementation =====
 
 export function useDiskTimeMachine({
@@ -110,6 +64,7 @@ export function useDiskTimeMachine({
 	maxChunks = 30,
 	diskBufferService = DiskBufferService,
 	deviceService = DeviceService,
+	mediaRecorderService = MediaRecorderService,
 }: DiskTimeMachineConfig): DiskTimeMachineControls {
 	// Recording state
 	const [isRecording, setIsRecording] = useState(false);
@@ -127,22 +82,34 @@ export function useDiskTimeMachine({
 	const [exportProgress, setExportProgress] = useState(0);
 
 	// Refs
-	const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+	const recordingSessionRef = useRef<RecordingSession | null>(null);
 	const recordingIntervalRef = useRef<number | null>(null);
 	const playbackVideoRef = useRef<HTMLVideoElement | null>(null);
 	const chunksRef = useRef<{ id: number; blob: Blob; timestamp: number }[]>([]);
 
 	// Initialize database on mount
 	useEffect(() => {
-		diskBufferService.init().catch(console.error);
+		diskBufferService.init().catch((err) => {
+			console.error("Failed to initialize storage:", err);
+			setRecordingError(
+				"Storage unavailable - time machine disabled. This may happen in private browsing mode.",
+			);
+		});
 	}, [diskBufferService]);
 
 	// Load existing chunks on mount
 	useEffect(() => {
 		async function loadExisting() {
-			const existingPreviews = await diskBufferService.getPreviews();
-			setPreviews(existingPreviews);
-			setChunkCount(existingPreviews.length);
+			try {
+				const existingPreviews = await diskBufferService.getPreviews();
+				setPreviews(existingPreviews);
+				setChunkCount(existingPreviews.length);
+			} catch (err) {
+				console.error("Failed to load existing chunks:", err);
+				setRecordingError(
+					"Could not load saved recordings - storage may be corrupted",
+				);
+			}
 		}
 		loadExisting();
 	}, [diskBufferService]);
@@ -154,82 +121,79 @@ export function useDiskTimeMachine({
 
 		const stream = video.srcObject as MediaStream;
 
-		// Determine best codec
-		const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9")
-			? "video/webm;codecs=vp9"
-			: "video/webm";
-
-		const recorder = new MediaRecorder(stream, {
-			mimeType,
-			videoBitsPerSecond: 2500000, // 2.5 Mbps
-		});
-
-		const chunks: Blob[] = [];
-		const startTimestamp = Date.now();
-
-		recorder.ondataavailable = (e) => {
-			if (e.data.size > 0) {
-				chunks.push(e.data);
-			}
-		};
-
-		recorder.onstop = async () => {
-			if (chunks.length === 0) return;
-
-			const blob = new Blob(chunks, { type: mimeType });
-			const duration = Date.now() - startTimestamp;
-
-			try {
-				// Extract preview frame
-				const preview = await extractPreviewFrame(blob);
-
-				// Save to IndexedDB
-				await diskBufferService.saveChunk({
-					blob,
-					preview,
-					timestamp: startTimestamp,
-					duration,
-				});
-
-				// Prune old chunks
-				await diskBufferService.pruneOldChunks(maxChunks);
-
-				// Update state
-				const updatedPreviews = await diskBufferService.getPreviews();
-				setPreviews(updatedPreviews);
-				setChunkCount(updatedPreviews.length);
-
-				// Update local cache
-				chunksRef.current = (await diskBufferService.getAllChunks()).map(
-					(c) => ({
-						id: c.id!,
-						blob: c.blob,
-						timestamp: c.timestamp,
-					}),
-				);
-			} catch (err) {
-				console.error("Failed to save chunk:", err);
-			}
-		};
-
 		try {
-			recorder.start();
-			mediaRecorderRef.current = recorder;
+			const session = mediaRecorderService.startRecording(stream, {
+				videoBitsPerSecond: 2500000, // 2.5 Mbps
+			});
+
+			const startTimestamp = Date.now();
+
+			// Set up callback to save chunk when recording stops
+			const originalStop = session.stop.bind(session);
+			session.stop = async () => {
+				const result = await originalStop();
+
+				try {
+					// Extract preview frame
+					const preview = await mediaRecorderService.extractPreviewFrame(
+						result.blob,
+					);
+
+					// Save to IndexedDB
+					await diskBufferService.saveChunk({
+						blob: result.blob,
+						preview,
+						timestamp: startTimestamp,
+						duration: result.duration,
+					});
+
+					// Prune old chunks
+					await diskBufferService.pruneOldChunks(maxChunks);
+
+					// Update state
+					const updatedPreviews = await diskBufferService.getPreviews();
+					setPreviews(updatedPreviews);
+					setChunkCount(updatedPreviews.length);
+
+					// Update local cache
+					chunksRef.current = (await diskBufferService.getAllChunks()).map(
+						(c) => ({
+							id: c.id!,
+							blob: c.blob,
+							timestamp: c.timestamp,
+						}),
+					);
+				} catch (err) {
+					console.error("Failed to save chunk:", err);
+					setRecordingError(
+						"Storage full - some video data may be lost. Free up space or reduce buffer size.",
+					);
+				}
+
+				return result;
+			};
+
+			session.start();
+			recordingSessionRef.current = session;
 			setRecordingError(null);
 		} catch (err) {
 			console.error("Failed to start MediaRecorder:", err);
 			setRecordingError("Recording failed - check camera connection");
+			setIsRecording(false);
 		}
-	}, [videoRef, diskBufferService, maxChunks]);
+	}, [videoRef, diskBufferService, maxChunks, mediaRecorderService]);
 
 	// Stop current recording chunk
 	const stopRecordingChunk = useCallback(() => {
-		if (
-			mediaRecorderRef.current &&
-			mediaRecorderRef.current.state === "recording"
-		) {
-			mediaRecorderRef.current.stop();
-			mediaRecorderRef.current = null;
+		const session = recordingSessionRef.current;
+		if (session && session.getState() === "recording") {
+			try {
+				session.stop();
+			} catch (err) {
+				console.error("Failed to stop recording chunk:", err);
+			} finally {
+				recordingSessionRef.current = null;
+			}
 		}
 	}, []);
 
@@ -249,6 +213,8 @@ export function useDiskTimeMachine({
 		// Wait for video to be ready
 		const video = videoRef.current;
 		if (!video || video.readyState < 3) {
+			let attempts = 0;
+			const MAX_ATTEMPTS = 50; // 5 seconds
 			const checkReady = setInterval(() => {
 				if (videoRef.current && videoRef.current.readyState >= 3) {
 					clearInterval(checkReady);
@@ -261,6 +227,10 @@ export function useDiskTimeMachine({
 						stopRecordingChunk();
 						startRecordingChunk();
 					}, chunkDurationMs);
+				} else if (++attempts >= MAX_ATTEMPTS) {
+					clearInterval(checkReady);
+					setRecordingError("Camera not ready - recording could not start");
+					console.error("Video element never became ready for recording");
 				}
 			}, 100);
 
@@ -283,6 +253,13 @@ export function useDiskTimeMachine({
 				clearInterval(recordingIntervalRef.current);
 				recordingIntervalRef.current = null;
 			}
+			// Cleanup playback video blob URL on unmount
+			if (
+				playbackVideoRef.current?.src &&
+				playbackVideoRef.current.src.startsWith("blob:")
+			) {
+				mediaRecorderService.revokeObjectUrl(playbackVideoRef.current.src);
+			}
 		};
 	}, [
 		enabled,
@@ -291,6 +268,7 @@ export function useDiskTimeMachine({
 		videoRef,
 		startRecordingChunk,
 		stopRecordingChunk,
+		mediaRecorderService,
 	]);
 
 	// Playback: load chunk into video element
@@ -303,20 +281,13 @@ export function useDiskTimeMachine({
 
 			// Get or create playback video element
 			if (!playbackVideoRef.current) {
-				playbackVideoRef.current = document.createElement("video");
-				playbackVideoRef.current.muted = true;
-				playbackVideoRef.current.playsInline = true;
+				playbackVideoRef.current = mediaRecorderService.createPlaybackElement();
 			}
 
 			const video = playbackVideoRef.current;
 
-			// Revoke previous blob URL if any
-			if (video.src?.startsWith("blob:")) {
-				URL.revokeObjectURL(video.src);
-			}
-
-			const blobUrl = URL.createObjectURL(chunk.blob);
-			video.src = blobUrl;
+			// Load blob (automatically revokes previous URL)
+			mediaRecorderService.loadBlob(video, chunk.blob);
 
 			// Set up auto-advance to next chunk
 			video.onended = () => {
@@ -330,12 +301,15 @@ export function useDiskTimeMachine({
 				});
 			};
 
-			await video.load();
 			if (isPlaying) {
-				video.play().catch(console.error);
+				video.play().catch((err) => {
+					console.error("Playback failed:", err);
+					setRecordingError("Playback failed - video may be corrupted");
+					setIsPlaying(false);
+				});
 			}
 		},
-		[isPlaying],
+		[isPlaying, mediaRecorderService],
 	);
 
 	// When chunk index changes during replay, load the new chunk
@@ -350,7 +324,11 @@ export function useDiskTimeMachine({
 		if (!isReplaying || !playbackVideoRef.current) return;
 
 		if (isPlaying) {
-			playbackVideoRef.current.play().catch(console.error);
+			playbackVideoRef.current.play().catch((err) => {
+				console.error("Playback failed:", err);
+				setRecordingError("Playback failed - video may be corrupted");
+				setIsPlaying(false);
+			});
 		} else {
 			playbackVideoRef.current.pause();
 		}
@@ -360,17 +338,24 @@ export function useDiskTimeMachine({
 	const enterReplay = useCallback(async () => {
 		if (chunkCount === 0) return;
 
-		// Load all chunks for playback
-		const allChunks = await diskBufferService.getAllChunks();
-		chunksRef.current = allChunks.map((c) => ({
-			id: c.id!,
-			blob: c.blob,
-			timestamp: c.timestamp,
-		}));
+		try {
+			// Load all chunks for playback
+			const allChunks = await diskBufferService.getAllChunks();
+			chunksRef.current = allChunks.map((c) => ({
+				id: c.id!,
+				blob: c.blob,
+				timestamp: c.timestamp,
+			}));
 
-		setIsReplaying(true);
-		setIsPlaying(true);
-		setCurrentChunkIndex(0);
+			setIsReplaying(true);
+			setIsPlaying(true);
+			setCurrentChunkIndex(0);
+		} catch (err) {
+			console.error("Failed to enter replay mode:", err);
+			setRecordingError(
+				"Could not load replay data - storage may be corrupted",
+			);
+		}
 	}, [chunkCount, diskBufferService]);
 
 	const exitReplay = useCallback(() => {
@@ -380,12 +365,12 @@ export function useDiskTimeMachine({
 		// Clean up playback video
 		if (playbackVideoRef.current) {
 			playbackVideoRef.current.pause();
-			if (playbackVideoRef.current.src?.startsWith("blob:")) {
-				URL.revokeObjectURL(playbackVideoRef.current.src);
+			if (playbackVideoRef.current.src) {
+				mediaRecorderService.revokeObjectUrl(playbackVideoRef.current.src);
 			}
 			playbackVideoRef.current.src = "";
 		}
-	}, []);
+	}, [mediaRecorderService]);
 
 	const play = useCallback(() => setIsPlaying(true), []);
 	const pause = useCallback(() => setIsPlaying(false), []);
@@ -427,6 +412,9 @@ export function useDiskTimeMachine({
 
 			if (blob.size === 0) {
 				setIsExporting(false);
+				setRecordingError(
+					"No video data to export - record some footage first",
+				);
 				return;
 			}
 

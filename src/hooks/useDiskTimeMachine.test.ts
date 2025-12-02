@@ -548,5 +548,354 @@ describe("useDiskTimeMachine", () => {
 
 			expect(mockDeviceService.downloadDataUrl).not.toHaveBeenCalled();
 		});
+
+		it("should handle export failures and set error state", async () => {
+			const videoRef = { current: null };
+			const mockService = createMockDiskBufferService([
+				{ id: 1, preview: "test", timestamp: 1000 },
+			]);
+
+			// Make exportVideo throw
+			mockService.exportVideo = vi
+				.fn()
+				.mockRejectedValue(new Error("Disk full"));
+
+			const { result } = renderHook(() =>
+				useDiskTimeMachine({
+					videoRef,
+					enabled: false,
+					deviceService: mockDeviceService,
+					diskBufferService: mockService,
+				}),
+			);
+
+			await waitFor(() => expect(result.current.chunkCount).toBe(1));
+
+			await act(async () => {
+				await result.current.saveVideo();
+			});
+
+			expect(result.current.recordingError).toBe(
+				"Export failed - please try again",
+			);
+			expect(result.current.isExporting).toBe(false);
+		});
+	});
+
+	describe("recording flow", () => {
+		// Helper to create video element with mocked stream and readyState
+		function createMockVideoElement() {
+			const videoElement = document.createElement("video");
+			const mockStream = {} as MediaStream;
+			videoElement.srcObject = mockStream;
+			// Mock readyState as it's read-only
+			Object.defineProperty(videoElement, "readyState", {
+				value: 4, // HAVE_ENOUGH_DATA
+				writable: false,
+			});
+			return videoElement;
+		}
+
+		// Create mock MediaRecorderService for recording tests
+		function createMockMediaRecorderService() {
+			let recordingSession: {
+				start: ReturnType<typeof vi.fn>;
+				stop: ReturnType<typeof vi.fn>;
+				getState: ReturnType<typeof vi.fn>;
+			} | null = null;
+
+			return {
+				isTypeSupported: vi.fn().mockReturnValue(true),
+				getBestCodec: vi.fn().mockReturnValue("video/webm;codecs=vp9"),
+				startRecording: vi.fn().mockImplementation(() => {
+					recordingSession = {
+						start: vi.fn(),
+						stop: vi.fn().mockResolvedValue({
+							blob: new Blob(["fake video"], { type: "video/webm" }),
+							duration: 2000,
+						}),
+						getState: vi.fn().mockReturnValue("recording"),
+					};
+					return recordingSession;
+				}),
+				extractPreviewFrame: vi
+					.fn()
+					.mockResolvedValue("data:image/jpeg;base64,mockPreview"),
+				createPlaybackElement: vi
+					.fn()
+					.mockImplementation(() => document.createElement("video")),
+				loadBlob: vi.fn().mockImplementation((video: HTMLVideoElement) => {
+					const url = "blob:mock-123";
+					video.src = url;
+					return url;
+				}),
+				revokeObjectUrl: vi.fn(),
+			};
+		}
+
+		it("should start recording when enabled", async () => {
+			const videoElement = createMockVideoElement();
+			const mockStream = videoElement.srcObject;
+			const videoRef = { current: videoElement };
+
+			const mockService = createMockDiskBufferService();
+			const mockMediaRecorderService = createMockMediaRecorderService();
+
+			const { result } = renderHook(() =>
+				useDiskTimeMachine({
+					videoRef,
+					enabled: true, // Start recording immediately
+					chunkDurationMs: 2000,
+					deviceService: mockDeviceService,
+					diskBufferService: mockService,
+					mediaRecorderService: mockMediaRecorderService,
+				}),
+			);
+
+			await waitFor(() => {
+				expect(mockMediaRecorderService.startRecording).toHaveBeenCalledWith(
+					mockStream,
+					{ videoBitsPerSecond: 2500000 },
+				);
+			});
+
+			expect(result.current.isRecording).toBe(true);
+			expect(result.current.recordingError).toBeNull();
+		});
+
+		it("should handle recording errors gracefully", async () => {
+			const videoElement = createMockVideoElement();
+			const videoRef = { current: videoElement };
+
+			const mockService = createMockDiskBufferService();
+			const mockMediaRecorderService = createMockMediaRecorderService();
+
+			// Make startRecording throw an error
+			mockMediaRecorderService.startRecording = vi
+				.fn()
+				.mockImplementation(() => {
+					throw new Error("MediaRecorder not supported");
+				});
+
+			const { result } = renderHook(() =>
+				useDiskTimeMachine({
+					videoRef,
+					enabled: true,
+					chunkDurationMs: 2000,
+					deviceService: mockDeviceService,
+					diskBufferService: mockService,
+					mediaRecorderService: mockMediaRecorderService,
+				}),
+			);
+
+			await waitFor(() => {
+				expect(result.current.recordingError).toBe(
+					"Recording failed - check camera connection",
+				);
+			});
+		});
+
+		it("should extract preview and save chunk when recording stops", async () => {
+			const videoElement = createMockVideoElement();
+			const videoRef = { current: videoElement };
+
+			const mockService = createMockDiskBufferService();
+			const mockMediaRecorderService = createMockMediaRecorderService();
+
+			renderHook(() =>
+				useDiskTimeMachine({
+					videoRef,
+					enabled: true,
+					chunkDurationMs: 2000,
+					deviceService: mockDeviceService,
+					diskBufferService: mockService,
+					mediaRecorderService: mockMediaRecorderService,
+				}),
+			);
+
+			// Wait for recording to start
+			await waitFor(() => {
+				expect(mockMediaRecorderService.startRecording).toHaveBeenCalled();
+			});
+
+			// Get the recording session
+			const sessionCalls = mockMediaRecorderService.startRecording.mock.results;
+			const session = sessionCalls[sessionCalls.length - 1].value;
+
+			// Trigger stop
+			await act(async () => {
+				await session.stop();
+			});
+
+			// Should extract preview
+			await waitFor(() => {
+				expect(mockMediaRecorderService.extractPreviewFrame).toHaveBeenCalled();
+			});
+
+			// Should save chunk to disk
+			await waitFor(() => {
+				expect(mockService.saveChunk).toHaveBeenCalledWith(
+					expect.objectContaining({
+						blob: expect.any(Blob),
+						preview: "data:image/jpeg;base64,mockPreview",
+						timestamp: expect.any(Number),
+						duration: 2000,
+					}),
+				);
+			});
+		});
+
+		it("should prune old chunks after saving new chunk", async () => {
+			const videoElement = createMockVideoElement();
+			const videoRef = { current: videoElement };
+
+			const mockService = createMockDiskBufferService();
+			const mockMediaRecorderService = createMockMediaRecorderService();
+
+			renderHook(() =>
+				useDiskTimeMachine({
+					videoRef,
+					enabled: true,
+					chunkDurationMs: 2000,
+					maxChunks: 30,
+					deviceService: mockDeviceService,
+					diskBufferService: mockService,
+					mediaRecorderService: mockMediaRecorderService,
+				}),
+			);
+
+			await waitFor(() => {
+				expect(mockMediaRecorderService.startRecording).toHaveBeenCalled();
+			});
+
+			const sessionCalls = mockMediaRecorderService.startRecording.mock.results;
+			const session = sessionCalls[sessionCalls.length - 1].value;
+
+			await act(async () => {
+				await session.stop();
+			});
+
+			await waitFor(() => {
+				expect(mockService.pruneOldChunks).toHaveBeenCalledWith(30);
+			});
+		});
+
+		it("should update chunk count and previews after save", async () => {
+			const videoElement = createMockVideoElement();
+			const videoRef = { current: videoElement };
+
+			// Start with empty buffer, then add a chunk
+			const mockService = createMockDiskBufferService();
+			const mockMediaRecorderService = createMockMediaRecorderService();
+
+			// Mock getPreviews to return one chunk after save
+			let previewsCallCount = 0;
+			mockService.getPreviews = vi.fn().mockImplementation(async () => {
+				previewsCallCount++;
+				if (previewsCallCount === 1) {
+					// First call (initial load)
+					return [];
+				}
+				// After save
+				return [
+					{ id: 1, preview: "data:image/jpeg;base64,test", timestamp: 1000 },
+				];
+			});
+
+			const { result } = renderHook(() =>
+				useDiskTimeMachine({
+					videoRef,
+					enabled: true,
+					chunkDurationMs: 2000,
+					deviceService: mockDeviceService,
+					diskBufferService: mockService,
+					mediaRecorderService: mockMediaRecorderService,
+				}),
+			);
+
+			expect(result.current.chunkCount).toBe(0);
+
+			await waitFor(() => {
+				expect(mockMediaRecorderService.startRecording).toHaveBeenCalled();
+			});
+
+			const sessionCalls = mockMediaRecorderService.startRecording.mock.results;
+			const session = sessionCalls[sessionCalls.length - 1].value;
+
+			await act(async () => {
+				await session.stop();
+			});
+
+			await waitFor(() => {
+				expect(result.current.chunkCount).toBe(1);
+				expect(result.current.previews.length).toBe(1);
+			});
+		});
+
+		it("should stop recording when disabled", async () => {
+			const videoElement = createMockVideoElement();
+			const videoRef = { current: videoElement };
+
+			const mockService = createMockDiskBufferService();
+			const mockMediaRecorderService = createMockMediaRecorderService();
+
+			const { result, rerender } = renderHook(
+				({ enabled }) =>
+					useDiskTimeMachine({
+						videoRef,
+						enabled,
+						chunkDurationMs: 2000,
+						deviceService: mockDeviceService,
+						diskBufferService: mockService,
+						mediaRecorderService: mockMediaRecorderService,
+					}),
+				{ initialProps: { enabled: true } },
+			);
+
+			await waitFor(() => {
+				expect(result.current.isRecording).toBe(true);
+			});
+
+			// Disable recording
+			act(() => {
+				rerender({ enabled: false });
+			});
+
+			await waitFor(() => {
+				expect(result.current.isRecording).toBe(false);
+			});
+		});
+
+		it("should stop recording when entering replay mode", async () => {
+			const videoElement = createMockVideoElement();
+			const videoRef = { current: videoElement };
+
+			const mockService = createMockDiskBufferService([
+				{ id: 1, preview: "data:image/jpeg;base64,test", timestamp: 1000 },
+			]);
+			const mockMediaRecorderService = createMockMediaRecorderService();
+
+			const { result } = renderHook(() =>
+				useDiskTimeMachine({
+					videoRef,
+					enabled: true,
+					chunkDurationMs: 2000,
+					deviceService: mockDeviceService,
+					diskBufferService: mockService,
+					mediaRecorderService: mockMediaRecorderService,
+				}),
+			);
+
+			await waitFor(() => {
+				expect(result.current.isRecording).toBe(true);
+			});
+
+			await act(async () => {
+				await result.current.enterReplay();
+			});
+
+			expect(result.current.isRecording).toBe(false);
+			expect(result.current.isReplaying).toBe(true);
+		});
 	});
 });

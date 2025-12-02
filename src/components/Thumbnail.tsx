@@ -46,20 +46,23 @@ export function Thumbnail({
 	);
 
 	return (
-		<div onClick={onClick} className={containerClass}>
+		<div onClick={onClick} className={`${containerClass} h-full`}>
 			{imageUrl ? (
 				// Disk mode: use img element with data URL
 				<img
 					src={imageUrl}
 					alt={label || "Thumbnail"}
-					className="rounded-md bg-black w-[100px] h-auto"
+					className="rounded-md bg-black w-full object-contain"
+					style={{
+						aspectRatio: "16/9",
+					}}
 				/>
 			) : (
 				// Memory mode: use canvas for ImageBitmap
-				<canvas ref={canvasRef} className="rounded-md bg-black" />
+				<canvas ref={canvasRef} className="rounded-md bg-black w-full" />
 			)}
 			{label && (
-				<div className="absolute bottom-0 right-0 bg-black/70 text-white text-[10px] px-1 rounded-tl">
+				<div className="absolute bottom-1 right-1 bg-black/80 text-white text-xs px-1.5 py-0.5 rounded backdrop-blur-sm">
 					{label}
 				</div>
 			)}

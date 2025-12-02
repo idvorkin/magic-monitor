@@ -44,13 +44,6 @@ if (useSsl) {
 
 // https://vite.dev/config/
 export default defineConfig({
-	// Required for FFmpeg.wasm to work (needs SharedArrayBuffer)
-	server: {
-		headers: {
-			"Cross-Origin-Opener-Policy": "same-origin",
-			"Cross-Origin-Embedder-Policy": "credentialless",
-		},
-	},
 	plugins: [
 		react(),
 		...(useSsl ? [basicSsl()] : []),
