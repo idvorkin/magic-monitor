@@ -497,12 +497,15 @@ Project-specific E2E testing details for the Magic Monitor application.
 - ✅ Canvas-based mock camera in `tests/magic-monitor.spec.ts`
 - ✅ Test fixtures (test-chunk.webm, test-preview.jpg)
 - ✅ Helper for seeding IndexedDB (`tests/helpers/seedRewindBuffer.ts`)
-- ✅ Basic E2E tests covering:
-  - Camera initialization
-  - Settings modal
-  - Flash detection (skipped - timing issues)
-  - Time machine (enter/exit replay, thumbnails, export)
-  - Zoom and quality controls
+- ✅ Helper for waiting on IndexedDB chunks (`waitForChunksLoaded`)
+- ✅ Helper for locating settings toggles (`getSettingsToggle`)
+- ✅ E2E tests covering (9 tests total):
+  - Camera initialization and device enumeration
+  - Settings modal (Mirror toggle, Camera switching)
+  - Flash detection (skipped - timing issues with mock camera)
+  - Time machine (enter/exit replay, thumbnails, video export)
+  - Zoom controls
+  - Error states (permission denied, no devices)
 
 ### Configuration
 - ✅ HTML reporter with interactive UI
@@ -511,17 +514,16 @@ Project-specific E2E testing details for the Magic Monitor application.
 - ✅ Trace recording (`trace: "on"`)
 - ✅ HTTPS support with `ignoreHTTPSErrors: true`
 - ✅ Headless mode enabled
+- ✅ Desktop (Chromium) and Mobile (WebKit/iPhone 14 Pro) projects
 
 ## Testing Gaps to Address
 
-### Phase 1: Fix & Stabilize
-1. **Fix skipped flash detection test** (`tests/magic-monitor.spec.ts:121`)
-   - Issue: Mock canvas stream and flash detector RAF loops don't sync reliably
-   - Solution: Add better timing/polling mechanism
-2. **Add missing core tests**
-   - Mirror mode toggle
-   - Camera device switching
-   - Error states (no permission, no devices)
+### Phase 1: Fix & Stabilize ✅ COMPLETE
+1. ~~**Fix skipped flash detection test**~~ (P2 - deferred, timing issues with mock camera RAF loops)
+2. **Core tests added:**
+   - ✅ Mirror mode toggle
+   - ✅ Camera device switching
+   - ✅ Error states (no permission, no devices)
 
 ### Phase 2: Expand Coverage
 3. **Smart Zoom & Hand Tracking**
@@ -530,7 +532,7 @@ Project-specific E2E testing details for the Magic Monitor application.
    - Test: hand detection, zoom follows movement, skeleton overlay
    - Test: pan boundary clamping (edge indicators)
 4. **Mobile Testing**
-   - Add mobile viewport configurations
+   - ⚠️ Requires WebKit: `npx playwright install webkit`
    - Test touch interactions
    - Test filmstrip on mobile
    - Test safe area insets
@@ -560,14 +562,17 @@ Project-specific E2E testing details for the Magic Monitor application.
 ```
 tests/helpers/
 ├── seedRewindBuffer.ts       # Seeds IndexedDB with test video chunks
+
+# Inline helpers in magic-monitor.spec.ts:
+├── waitForChunksLoaded()     # Waits for IndexedDB to have expected chunk count
+├── getSettingsToggle()       # Locates toggle switches by label pattern
+└── injectMockCamera()        # Canvas-based mock camera with color control
 ```
 
-### To Create
+### To Create (Phase 2+)
 ```
 tests/helpers/
 ├── mockVideoCamera.ts        # Video file-based mock for hand tracking
-├── mockCanvas.ts             # Extract canvas mock from spec (refactor)
-├── waitForCondition.ts       # Polling helper for flash detection
 └── mobileViewport.ts         # Mobile testing utilities
 ```
 
