@@ -6,23 +6,39 @@ export default defineConfig({
 	forbidOnly: !!process.env.CI,
 	retries: process.env.CI ? 2 : 0,
 	workers: process.env.CI ? 1 : undefined,
-	reporter: "list", // Switch to list reporter for better console output
+	reporter: [
+		["list"],
+		["html", { outputFolder: "playwright-report" }],
+	],
 	use: {
-		baseURL: "http://localhost:5173",
-		trace: "on-first-retry",
+		baseURL: "https://localhost:5173",
+		trace: "on",
+		video: "on",
+		screenshot: "on",
+		ignoreHTTPSErrors: true,
 	},
 	projects: [
 		{
 			name: "chromium",
-			use: { ...devices["Desktop Chrome"] },
+			use: {
+				...devices["Desktop Chrome"],
+				headless: true,
+			},
+		},
+		{
+			name: "mobile",
+			use: {
+				...devices["iPhone 14 Pro"],
+				headless: true,
+			},
 		},
 	],
-	webServer: {
-		command: "npm run dev",
-		url: "http://localhost:5173",
-		reuseExistingServer: true,
-		timeout: 120 * 1000,
-		stdout: "ignore",
-		stderr: "pipe",
-	},
+	// webServer: {
+	// 	command: "npm run dev",
+	// 	url: "http://localhost:5173",
+	// 	reuseExistingServer: true,
+	// 	timeout: 120 * 1000,
+	// 	stdout: "ignore",
+	// 	stderr: "pipe",
+	// },
 });
