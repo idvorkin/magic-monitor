@@ -13,6 +13,7 @@ export function useCamera(initialDeviceId?: string) {
 	const [selectedDeviceId, setSelectedDeviceId] = useState<string>(
 		initialDeviceId || DeviceService.getStorageItem(STORAGE_KEY) || "",
 	);
+	const [retryCount, setRetryCount] = useState(0);
 
 	const getDevices = useCallback(async () => {
 		const videoDevices = await CameraService.getVideoDevices();
@@ -24,8 +25,9 @@ export function useCamera(initialDeviceId?: string) {
 		}
 	}, [selectedDeviceId]);
 
-	// Handle device changes
+	// Handle device changes - syncs with external device enumeration
 	useEffect(() => {
+		// eslint-disable-next-line react-hooks/set-state-in-effect -- Syncing with external device list
 		getDevices();
 
 		// Skip event listener if mediaDevices unavailable (insecure context)
@@ -106,12 +108,18 @@ export function useCamera(initialDeviceId?: string) {
 				streamRef.current = null;
 			}
 		};
-	}, [selectedDeviceId, getDevices]); // Re-run when selected device changes
+	}, [selectedDeviceId, getDevices, retryCount]); // Re-run when selected device changes or retry is triggered
 
 	// Wrap setter to persist selection
 	const handleSetSelectedDeviceId = useCallback((deviceId: string) => {
 		setSelectedDeviceId(deviceId);
 		DeviceService.setStorageItem(STORAGE_KEY, deviceId);
+	}, []);
+
+	// Retry camera access - triggers re-run of the setup effect
+	const retry = useCallback(() => {
+		setError(null);
+		setRetryCount((c) => c + 1);
 	}, []);
 
 	return {
@@ -120,5 +128,6 @@ export function useCamera(initialDeviceId?: string) {
 		devices,
 		selectedDeviceId,
 		setSelectedDeviceId: handleSetSelectedDeviceId,
+		retry,
 	};
 }

@@ -1,5 +1,5 @@
 import { Bug, Camera, Copy, ExternalLink, Smartphone, X } from "lucide-react";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { BugReportData } from "../hooks/useBugReporter";
 import { DeviceService } from "../services/DeviceService";
 
@@ -46,32 +46,35 @@ export function BugReportModal({
 	const [hasScreenshotOnClipboard, setHasScreenshotOnClipboard] =
 		useState(false);
 	const [showShakePrompt, setShowShakePrompt] = useState(false);
-	const [wasOpen, setWasOpen] = useState(false);
 	const isCapturingRef = useRef(false);
+	const prevIsOpenRef = useRef(false);
 
-	// Reset form when modal opens (using wasOpen to detect transition)
+	// Reset form when modal opens
 	// Skip reset if we're just reopening after screenshot capture
-	if (isOpen && !wasOpen) {
-		setWasOpen(true);
-		if (!isCapturingRef.current) {
-			setTitle(defaultData.title);
-			setDescription(defaultData.description);
-			setIncludeMetadata(defaultData.includeMetadata);
-			setScreenshot(null);
-			setSubmitted(false);
+	useEffect(() => {
+		const wasOpen = prevIsOpenRef.current;
+		prevIsOpenRef.current = isOpen;
 
-			// Show shake prompt on first time if supported and not enabled
-			if (isFirstTime && isShakeSupported && !shakeEnabled) {
-				setShowShakePrompt(true);
-				onFirstTimeShown();
-			} else {
-				setShowShakePrompt(false);
+		if (isOpen && !wasOpen) {
+			if (!isCapturingRef.current) {
+				// eslint-disable-next-line react-hooks/set-state-in-effect -- Resetting form when modal opens is valid
+				setTitle(defaultData.title);
+				setDescription(defaultData.description);
+				setIncludeMetadata(defaultData.includeMetadata);
+				setScreenshot(null);
+				setSubmitted(false);
+
+				// Show shake prompt on first time if supported and not enabled
+				if (isFirstTime && isShakeSupported && !shakeEnabled) {
+					setShowShakePrompt(true);
+					onFirstTimeShown();
+				} else {
+					setShowShakePrompt(false);
+				}
 			}
+			isCapturingRef.current = false;
 		}
-		isCapturingRef.current = false;
-	} else if (!isOpen && wasOpen) {
-		setWasOpen(false);
-	}
+	}, [isOpen, defaultData, isFirstTime, isShakeSupported, shakeEnabled, onFirstTimeShown]);
 
 	const handleSubmit = useCallback(async () => {
 		const result = await onSubmit({

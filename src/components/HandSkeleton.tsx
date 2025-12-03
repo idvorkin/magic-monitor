@@ -48,10 +48,11 @@ interface VideoRect {
 export function HandSkeleton({ landmarks, videoRef, isMirror = false }: HandSkeletonProps) {
 	const [videoRect, setVideoRect] = useState<VideoRect | null>(null);
 
-	// Update video rect via effect (not during render)
+	// Update video rect via effect - syncs with DOM getBoundingClientRect
 	useEffect(() => {
 		const video = videoRef.current;
 		if (!video) {
+			// eslint-disable-next-line react-hooks/set-state-in-effect -- Syncing with DOM element availability
 			setVideoRect(null);
 			return;
 		}

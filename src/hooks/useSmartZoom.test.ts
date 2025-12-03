@@ -16,7 +16,7 @@ vi.mock("@mediapipe/tasks-vision", () => ({
 	},
 	HandLandmarker: {
 		createFromOptions: vi.fn().mockResolvedValue({
-			detectForVideo: (...args: any[]) => {
+			detectForVideo: (...args: unknown[]) => {
 				return mockDetectForVideo(...args);
 			},
 			close: () => mockClose(),

@@ -162,13 +162,6 @@ export function CameraStage() {
 		};
 	}, []);
 
-	// Helper to build video/canvas transform string
-	// Combines mirror, zoom, and pan transforms
-	const getVideoTransform = useCallback(() => {
-		const mirrorTransform = isMirror ? "scaleX(-1) " : "";
-		return `${mirrorTransform}scale(${zoom}) translate(${(pan.x * 100).toFixed(2)}%, ${(pan.y * 100).toFixed(2)}%)`;
-	}, [isMirror, zoom, pan]);
-
 	// Smart Zoom
 	const smartZoom = useSmartZoom({
 		videoRef,
@@ -176,14 +169,16 @@ export function CameraStage() {
 		smoothingPreset,
 	});
 
-	// Effect to apply smart zoom values
-	// Note: SmartZoom already clamps pan correctly via clampPanToViewport - don't re-clamp
-	useEffect(() => {
-		if (isSmartZoom) {
-			setZoom(smartZoom.zoom);
-			setPan(smartZoom.pan);
-		}
-	}, [isSmartZoom, smartZoom.zoom, smartZoom.pan]);
+	// Compute effective zoom/pan: use smartZoom values when enabled, else local state
+	const effectiveZoom = isSmartZoom ? smartZoom.zoom : zoom;
+	const effectivePan = isSmartZoom ? smartZoom.pan : pan;
+
+	// Helper to build video/canvas transform string
+	// Combines mirror, zoom, and pan transforms
+	const getVideoTransform = useCallback(() => {
+		const mirrorTransform = isMirror ? "scaleX(-1) " : "";
+		return `${mirrorTransform}scale(${effectiveZoom}) translate(${(effectivePan.x * 100).toFixed(2)}%, ${(effectivePan.y * 100).toFixed(2)}%)`;
+	}, [isMirror, effectiveZoom, effectivePan]);
 
 	// Time Machine State (Disk-based for mobile support and full resolution)
 	// 2-second chunks, 30 chunks max = 60 seconds buffer
@@ -205,7 +200,7 @@ export function CameraStage() {
 	});
 
 	// Camera State via Humble Object Hook
-	const { stream, error, devices, selectedDeviceId, setSelectedDeviceId } =
+	const { stream, error, devices, selectedDeviceId, setSelectedDeviceId, retry } =
 		useCamera();
 
 	// Version check for updates
@@ -284,6 +279,8 @@ export function CameraStage() {
 
 	const handleWheel = (e: React.WheelEvent) => {
 		e.preventDefault();
+		// Manual zoom takes control from smart zoom
+		if (isSmartZoom) setIsSmartZoom(false);
 		const newZoom = Math.min(Math.max(zoom - e.deltaY * 0.001, 1), 5);
 		setZoom(newZoom);
 
@@ -480,8 +477,8 @@ export function CameraStage() {
 			{/* Minimap (Only when zoomed) */}
 			<Minimap
 				stream={stream}
-				zoom={zoom}
-				pan={pan}
+				zoom={effectiveZoom}
+				pan={effectivePan}
 				frame={null}
 				onPanTo={handlePanTo}
 			/>
@@ -504,8 +501,24 @@ export function CameraStage() {
 			</div>
 
 			{error && (
-				<div className="absolute inset-0 flex items-center justify-center z-50 bg-black/80 text-red-500">
-					<p className="text-xl font-bold">{error}</p>
+				<div className="absolute inset-0 flex items-center justify-center z-50 bg-black/80">
+					<div className="flex flex-col items-center gap-4 max-w-md mx-4 text-center">
+						<p className="text-xl font-bold text-red-500">{error}</p>
+						<button
+							onClick={retry}
+							className="px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-lg text-lg transition-colors"
+						>
+							Try Again
+						</button>
+						<p className="text-white/60 text-sm">
+							If camera access was denied, you may need to enable it in your browser settings:
+						</p>
+						<ul className="text-white/50 text-xs text-left list-disc pl-4 space-y-1">
+							<li><strong>iOS Safari:</strong> Settings → Safari → Camera → Allow</li>
+							<li><strong>Chrome/Edge:</strong> Click the lock icon in the address bar → Camera → Allow</li>
+							<li><strong>Firefox:</strong> Click the lock icon → Connection secure → More information → Permissions</li>
+						</ul>
+					</div>
 				</div>
 			)}
 
@@ -811,6 +824,8 @@ export function CameraStage() {
 								<div className="h-6 w-px bg-white/20" />
 								<button
 									onClick={() => {
+										// Manual reset takes control from smart zoom
+										if (isSmartZoom) setIsSmartZoom(false);
 										setZoom(1);
 										setPan({ x: 0, y: 0 });
 									}}
@@ -823,16 +838,18 @@ export function CameraStage() {
 									min="1"
 									max="5"
 									step="0.1"
-									value={zoom}
+									value={effectiveZoom}
 									onChange={(e) => {
 										const newZoom = Number.parseFloat(e.target.value);
+										// Manual zoom takes control from smart zoom
+										if (isSmartZoom) setIsSmartZoom(false);
 										setZoom(newZoom);
 										setPan((prev) => clampPan(prev, newZoom));
 									}}
 									className="w-32 accent-blue-500"
 								/>
 								<span className="text-white font-mono w-12 text-right">
-									{zoom.toFixed(1)}x
+									{effectiveZoom.toFixed(1)}x
 								</span>
 								<div className="h-6 w-px bg-white/20" />
 							</>

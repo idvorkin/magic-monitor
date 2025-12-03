@@ -12,6 +12,7 @@ export function VersionNotification() {
 	// Delay showing notification to avoid interrupting users mid-task
 	useEffect(() => {
 		if (!updateAvailable) {
+			// eslint-disable-next-line react-hooks/set-state-in-effect -- Syncing with updateAvailable prop change
 			setShowNotification(false);
 			return;
 		}

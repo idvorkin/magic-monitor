@@ -16,6 +16,13 @@ export interface ClampedEdges {
 	bottom: boolean;
 }
 
+// Hand landmark point from MediaPipe
+interface HandLandmark {
+	x: number;
+	y: number;
+	z: number;
+}
+
 // Debug trace entry for diagnostics
 export interface DebugTraceEntry {
 	timestamp: number;
@@ -112,7 +119,7 @@ export function useSmartZoom({
 	smoothingPreset = "ema",
 }: SmartZoomConfig) {
 	const [isModelLoading, setIsModelLoading] = useState(true);
-	const [debugLandmarks, setDebugLandmarks] = useState<any[]>([]);
+	const [debugLandmarks, setDebugLandmarks] = useState<HandLandmark[][]>([]);
 
 	// Smoother instance (recreated when preset changes)
 	const smootherRef = useRef<Smoother>(createSmoother(smoothingPreset));
