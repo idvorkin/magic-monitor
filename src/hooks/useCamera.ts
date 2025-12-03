@@ -91,8 +91,24 @@ export function useCamera(initialDeviceId?: string) {
 					console.error("Error accessing camera:", err);
 					if (err instanceof InsecureContextError) {
 						setError(err.message);
+					} else if (
+						err instanceof Error &&
+						(err.name === "NotAllowedError" || err.name === "PermissionDeniedError")
+					) {
+						setError(
+							"Camera access denied. Please allow camera permissions in your browser settings, then reload this page.",
+						);
+					} else if (err instanceof Error && err.name === "NotFoundError") {
+						setError("No camera found. Please connect a camera and try again.");
+					} else if (
+						err instanceof Error &&
+						err.name === "NotReadableError"
+					) {
+						setError(
+							"Camera is in use by another application. Please close other apps using the camera and try again.",
+						);
 					} else {
-						setError("Could not access camera. Please allow permissions.");
+						setError("Could not access camera. Please check permissions and try again.");
 					}
 					setStream(null);
 				}

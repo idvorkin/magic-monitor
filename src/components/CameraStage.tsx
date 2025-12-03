@@ -504,14 +504,22 @@ export function CameraStage() {
 				<div className="absolute inset-0 flex items-center justify-center z-50 bg-black/80">
 					<div className="flex flex-col items-center gap-4 max-w-md mx-4 text-center">
 						<p className="text-xl font-bold text-red-500">{error}</p>
-						<button
-							onClick={retry}
-							className="px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-lg text-lg transition-colors"
-						>
-							Try Again
-						</button>
+						<div className="flex gap-3">
+							<button
+								onClick={retry}
+								className="px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-lg text-lg transition-colors"
+							>
+								Try Again
+							</button>
+							<button
+								onClick={() => window.location.reload()}
+								className="px-6 py-3 bg-green-600 hover:bg-green-500 text-white font-bold rounded-lg text-lg transition-colors"
+							>
+								Reload Page
+							</button>
+						</div>
 						<p className="text-white/60 text-sm">
-							If camera access was denied, you may need to enable it in your browser settings:
+							If camera access was denied, enable it in your browser settings, then click "Reload Page":
 						</p>
 						<ul className="text-white/50 text-xs text-left list-disc pl-4 space-y-1">
 							<li><strong>iOS Safari:</strong> Settings → Safari → Camera → Allow</li>
