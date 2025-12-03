@@ -279,13 +279,18 @@ export function CameraStage() {
 
 	const handleWheel = (e: React.WheelEvent) => {
 		e.preventDefault();
-		// Manual zoom takes control from smart zoom
-		if (isSmartZoom) setIsSmartZoom(false);
-		const newZoom = Math.min(Math.max(zoom - e.deltaY * 0.001, 1), 5);
-		setZoom(newZoom);
+		// When taking manual control from smart zoom, start from current smart zoom values
+		// to avoid jarring jumps (e.g., from 2.5x smart zoom to 1x local zoom)
+		const currentZoom = isSmartZoom ? smartZoom.zoom : zoom;
+		const currentPan = isSmartZoom ? smartZoom.pan : pan;
 
-		// Re-clamp pan with new zoom level
-		setPan((prev) => clampPan(prev, newZoom));
+		if (isSmartZoom) {
+			setIsSmartZoom(false);
+		}
+
+		const newZoom = Math.min(Math.max(currentZoom - e.deltaY * 0.001, 1), 5);
+		setZoom(newZoom);
+		setPan(clampPan(currentPan, newZoom));
 	};
 
 	const handleMouseDown = (e: React.MouseEvent) => {
@@ -841,10 +846,12 @@ export function CameraStage() {
 									value={effectiveZoom}
 									onChange={(e) => {
 										const newZoom = Number.parseFloat(e.target.value);
-										// Manual zoom takes control from smart zoom
+										// When taking manual control from smart zoom, sync pan
+										// to avoid jarring jumps in pan position
+										const currentPan = isSmartZoom ? smartZoom.pan : pan;
 										if (isSmartZoom) setIsSmartZoom(false);
 										setZoom(newZoom);
-										setPan((prev) => clampPan(prev, newZoom));
+										setPan(clampPan(currentPan, newZoom));
 									}}
 									className="w-32 accent-blue-500"
 								/>
