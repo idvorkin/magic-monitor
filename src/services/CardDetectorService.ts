@@ -223,7 +223,7 @@ class CardDetectorServiceImpl {
 
 			console.log("[CardDetectorService] Creating ONNX inference session...");
 			this.session = await ort.InferenceSession.create(modelBuffer.buffer, {
-				executionProviders: ["webgl"],
+				executionProviders: ["webgpu", "webgl", "wasm"],
 				graphOptimizationLevel: "all",
 			});
 

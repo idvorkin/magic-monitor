@@ -4,6 +4,7 @@
 .specstory/**
 .aider*
 .claude/
+.beads/
 .runtime/
 public/models/*.onnx
 .cursorindexingignore
