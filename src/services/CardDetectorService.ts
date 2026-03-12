@@ -3,6 +3,8 @@
  *
  * Mirrors HandLandmarkerService: loads model once, shares across components,
  * exposes loading state via subscribe pattern.
+ *
+ * Model: PD-Mera YOLOv8s (416x416 input, 52 card classes)
  */
 import * as ort from "onnxruntime-web";
 import {
@@ -26,7 +28,7 @@ type LoadingListener = (state: LoadingState) => void;
 // YOLO model input size (square)
 const MODEL_INPUT_SIZE = 416;
 const MODEL_PATH =
-	"https://github.com/idvorkin-ai-tools/magic-monitor/releases/download/v1.0.0-models/card-detector.onnx";
+	"https://idvorkin-models.s3.us-west-2.amazonaws.com/card-detector.onnx";
 
 // NMS parameters
 const NMS_IOU_THRESHOLD = 0.5;

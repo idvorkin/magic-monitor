@@ -5,6 +5,7 @@
 .aider*
 .claude/
 .runtime/
+public/models/*.onnx
 .cursorindexingignore
 src/generated_version.ts
 
