@@ -24,6 +24,7 @@ function createDefaultProps(overrides: Partial<Parameters<typeof SettingsModal>[
 		onMirrorChange: vi.fn(),
 		isSmartZoom: false,
 		isModelLoading: false,
+		smartZoomModelError: null,
 		onSmartZoomChange: vi.fn(),
 		smoothingPreset: "ema" as const,
 		onSmoothingPresetChange: vi.fn(),

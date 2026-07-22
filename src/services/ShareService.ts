@@ -69,13 +69,16 @@ export const ShareService = {
 
 	/**
 	 * Generate a timestamped filename for video exports.
+	 * Extension follows the blob's container (iOS records MP4; naming it
+	 * .webm makes receiving apps refuse to play it).
 	 */
-	generateFilename(prefix = "practice-clip"): string {
+	generateFilename(prefix = "practice-clip", mimeType = "video/webm"): string {
 		const timestamp = new Date()
 			.toISOString()
 			.slice(0, 19)
 			.replace(/:/g, "-");
-		return `${prefix}-${timestamp}.webm`;
+		const extension = mimeType.startsWith("video/mp4") ? "mp4" : "webm";
+		return `${prefix}-${timestamp}.${extension}`;
 	},
 };
 

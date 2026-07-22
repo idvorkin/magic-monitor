@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PAN_CONSTANTS, ZOOM_CONSTANTS } from "../constants/zoom";
-import { HandLandmarkerService, type LoadingState } from "../services/HandLandmarkerService";
+import { HandLandmarkerService } from "../services/HandLandmarkerService";
 import {
 	clampSpeed,
 	createSmoother,
@@ -8,6 +8,7 @@ import {
 	type Smoother,
 	type SmoothingPreset,
 } from "../smoothing";
+import { useModelLoadingState } from "./useModelLoadingState";
 
 // Clamped edges indicator for debug overlay (see docs/SMART_ZOOM_SPEC.md)
 export interface ClampedEdges {
@@ -135,9 +136,8 @@ export function useSmartZoom({
 	padding = 2.0,
 	smoothingPreset = "ema",
 }: SmartZoomConfig) {
-	const [isModelLoading, setIsModelLoading] = useState(true);
-	const [loadingProgress, setLoadingProgress] = useState(0);
-	const [loadingPhase, setLoadingPhase] = useState<"downloading" | "initializing">("downloading");
+	const { isModelLoading, loadingProgress, loadingPhase, modelError } =
+		useModelLoadingState(HandLandmarkerService, { initialIsLoading: true });
 	// Use ref instead of state for landmarks to avoid 60fps re-renders
 	// HandSkeleton reads from this ref directly in its own rAF loop
 	const debugLandmarksRef = useRef<HandLandmark[][]>([]);
@@ -173,7 +173,12 @@ export function useSmartZoom({
 	// Refs for high-frequency updates (60fps) - these drive the actual transform
 	const zoomRef = useRef(1);
 	const panRef = useRef({ x: 0, y: 0 });
-	const clampedEdgesRef = useRef<ClampedEdges>({ left: false, right: false, top: false, bottom: false });
+	const clampedEdgesRef = useRef<ClampedEdges>({
+		left: false,
+		right: false,
+		top: false,
+		bottom: false,
+	});
 
 	// Throttle UI state updates to ~10Hz (every 6 frames) to avoid render storms
 	// The refs above always have the real-time value; state is for UI display only
@@ -184,8 +189,12 @@ export function useSmartZoom({
 
 	// Offscreen canvas for downscaling video before detection
 	// MediaPipe's hand model works at 224x224 internally, so 640-wide is more than enough
-	const processingCanvasRef = useRef<OffscreenCanvas | HTMLCanvasElement | null>(null);
-	const processingCtxRef = useRef<CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null>(null);
+	const processingCanvasRef = useRef<
+		OffscreenCanvas | HTMLCanvasElement | null
+	>(null);
+	const processingCtxRef = useRef<
+		CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null
+	>(null);
 	const lastVideoDimsRef = useRef({ width: 0, height: 0 });
 	const processingResRef = useRef({ width: 0, height: 0 });
 
@@ -195,23 +204,6 @@ export function useSmartZoom({
 	// Debug trace buffer (circular)
 	const debugTraceRef = useRef<DebugTraceEntry[]>([]);
 	const frameCountRef = useRef(0);
-
-	// Subscribe to singleton HandLandmarkerService for model loading
-	useEffect(() => {
-		const handleStateChange = (state: LoadingState) => {
-			setIsModelLoading(state.phase === "downloading" || state.phase === "initializing");
-			setLoadingProgress(state.progress);
-			setLoadingPhase(state.phase === "initializing" ? "initializing" : "downloading");
-		};
-
-		const unsubscribe = HandLandmarkerService.subscribe(handleStateChange);
-
-		// Trigger model loading (no-op if already loaded/loading)
-		HandLandmarkerService.load();
-
-		return unsubscribe;
-		// Note: No cleanup of model - it's shared across components via the service
-	}, []);
 
 	// Clear debug trace when smart zoom is disabled
 	useEffect(() => {
@@ -227,7 +219,13 @@ export function useSmartZoom({
 
 		const detect = () => {
 			const video = videoRef.current;
-			if (!video || video.paused || video.ended) {
+			if (
+				!video ||
+				video.paused ||
+				video.ended ||
+				video.readyState < 2 ||
+				video.videoWidth === 0
+			) {
 				requestRef.current = requestAnimationFrame(detect);
 				return;
 			}
@@ -250,7 +248,9 @@ export function useSmartZoom({
 					}
 					processingCanvasRef.current.width = dims.width;
 					processingCanvasRef.current.height = dims.height;
-					processingCtxRef.current = (processingCanvasRef.current as HTMLCanvasElement).getContext("2d");
+					processingCtxRef.current = (
+						processingCanvasRef.current as HTMLCanvasElement
+					).getContext("2d");
 					lastVideoDimsRef.current = { width: vw, height: vh };
 					processingResRef.current = dims;
 				}
@@ -306,7 +306,10 @@ export function useSmartZoom({
 					let targetZoom = 1 / (maxDim * padding);
 
 					// Clamp zoom (see docs/SMART_ZOOM_SPEC.md)
-					targetZoom = Math.min(Math.max(targetZoom, ZOOM_CONSTANTS.MIN_ZOOM), ZOOM_CONSTANTS.MAX_ZOOM);
+					targetZoom = Math.min(
+						Math.max(targetZoom, ZOOM_CONSTANTS.MIN_ZOOM),
+						ZOOM_CONSTANTS.MAX_ZOOM,
+					);
 
 					// Determine target pan in NORMALIZED coordinates (0-1 range)
 					// Pan of 0 = centered, positive = shift view left/up
@@ -326,7 +329,10 @@ export function useSmartZoom({
 					// panDist is now in normalized units (0-1), threshold is also normalized
 
 					// Only update committed target if change is significant
-					if (zoomDelta > ZOOM_CONSTANTS.THRESHOLD || panDist > PAN_CONSTANTS.THRESHOLD) {
+					if (
+						zoomDelta > ZOOM_CONSTANTS.THRESHOLD ||
+						panDist > PAN_CONSTANTS.THRESHOLD
+					) {
 						committedTargetRef.current = {
 							zoom: targetZoom,
 							pan: { x: targetPanX, y: targetPanY },
@@ -387,7 +393,10 @@ export function useSmartZoom({
 
 					// Always update refs (real-time values for transforms)
 					zoomRef.current = prevPositionRef.current.zoom;
-					panRef.current = { x: prevPositionRef.current.x, y: prevPositionRef.current.y };
+					panRef.current = {
+						x: prevPositionRef.current.x,
+						y: prevPositionRef.current.y,
+					};
 					clampedEdgesRef.current = edges;
 					debugLandmarksRef.current = result.landmarks;
 
@@ -456,7 +465,10 @@ export function useSmartZoom({
 
 					// Always update refs (real-time values for transforms)
 					zoomRef.current = prevPositionRef.current.zoom;
-					panRef.current = { x: prevPositionRef.current.x, y: prevPositionRef.current.y };
+					panRef.current = {
+						x: prevPositionRef.current.x,
+						y: prevPositionRef.current.y,
+					};
 					clampedEdgesRef.current = edges;
 					debugLandmarksRef.current = [];
 
@@ -499,6 +511,7 @@ export function useSmartZoom({
 		isModelLoading,
 		loadingProgress,
 		loadingPhase,
+		modelError,
 		zoom,
 		pan,
 		clampedEdges,

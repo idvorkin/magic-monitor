@@ -1,7 +1,10 @@
 import "fake-indexeddb/auto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PracticeSession } from "../types/sessions";
-import { SessionStorageService } from "./SessionStorageService";
+import {
+	SessionStorageService,
+	settleTransaction,
+} from "./SessionStorageService";
 
 // Helper to create a test session
 function createTestSession(
@@ -456,6 +459,44 @@ describe("SessionStorageService", () => {
 			expect(usage.quota).toBe(0);
 
 			vi.unstubAllGlobals();
+		});
+	});
+
+	describe("settleTransaction (H5)", () => {
+		it("rejects on abort instead of hanging forever", async () => {
+			const fakeTx = {
+				oncomplete: null,
+				onerror: null,
+				onabort: null,
+				error: null,
+			} as unknown as IDBTransaction;
+			const promise = settleTransaction(fakeTx, () => "unreachable");
+			fakeTx.onabort?.(new Event("abort"));
+			await expect(promise).rejects.toThrow(/aborted/);
+		});
+
+		it("resolves the result on complete", async () => {
+			const fakeTx = {
+				oncomplete: null,
+				onerror: null,
+				onabort: null,
+			} as unknown as IDBTransaction;
+			const promise = settleTransaction(fakeTx, () => 42);
+			fakeTx.oncomplete?.(new Event("complete"));
+			await expect(promise).resolves.toBe(42);
+		});
+
+		it("rejects when result() throws instead of hanging", async () => {
+			const fakeTx = {
+				oncomplete: null,
+				onerror: null,
+				onabort: null,
+			} as unknown as IDBTransaction;
+			const promise = settleTransaction(fakeTx, () => {
+				throw new Error("result blew up");
+			});
+			fakeTx.oncomplete?.(new Event("complete"));
+			await expect(promise).rejects.toThrow("result blew up");
 		});
 	});
 });

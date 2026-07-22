@@ -227,6 +227,7 @@ export function ReplayView({
 				isModelLoading={smartZoom.isModelLoading}
 				loadingProgress={smartZoom.loadingProgress}
 				loadingPhase={smartZoom.loadingPhase}
+				modelError={smartZoom.modelError}
 			/>
 
 			{/* Save Dialog */}

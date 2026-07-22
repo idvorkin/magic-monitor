@@ -84,11 +84,11 @@ test.describe("Dropdown Bug Investigation", () => {
 		expect(value).toBe("1080p");
 	});
 
-	// APP BUG: useSmartZoom runs detect() before loadedmetadata; a 0x0 frame crashes
-	// MediaPipe WASM (RET_CHECK roi->width > 0) and the error boundary tears down the
-	// UI. Passes in isolation, fails under suite timing. Fix tracked in reliability
-	// sweep (smart-zoom cluster).
-	test.fixme("Camera source dropdown should stay open when clicked", async ({ page }) => {
+	// Regression guard: useSmartZoom/useCardDetection used to run detect() before
+	// loadedmetadata; a 0x0 frame crashed MediaPipe/ONNX WASM and the error boundary
+	// tore down the whole UI. Both detection loops now skip frames with
+	// readyState < 2 or videoWidth === 0 (see useSmartZoom.ts / useCardDetection.ts).
+	test("Camera source dropdown should stay open when clicked", async ({ page }) => {
 		// Open settings
 		await page.getByTitle("Settings").click();
 		await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();

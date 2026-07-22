@@ -142,16 +142,20 @@ describe("ShareService", () => {
 	});
 
 	describe("generateFilename", () => {
-		it("generates timestamped filename with default prefix", () => {
-			const filename = ShareService.generateFilename();
-
-			expect(filename).toMatch(/^practice-clip-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.webm$/);
+		it("generates a .webm filename for webm blobs", () => {
+			expect(
+				ShareService.generateFilename("my-clip", "video/webm;codecs=vp9"),
+			).toMatch(/^my-clip-.*\.webm$/);
 		});
 
-		it("uses custom prefix when provided", () => {
-			const filename = ShareService.generateFilename("my-clip");
+		it("generates an .mp4 filename for mp4 blobs (iOS)", () => {
+			expect(
+				ShareService.generateFilename("my-clip", "video/mp4;codecs=avc1.42E01E"),
+			).toMatch(/^my-clip-.*\.mp4$/);
+		});
 
-			expect(filename).toMatch(/^my-clip-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.webm$/);
+		it("defaults to .webm when no mime type is given", () => {
+			expect(ShareService.generateFilename()).toMatch(/\.webm$/);
 		});
 	});
 });

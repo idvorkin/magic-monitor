@@ -561,7 +561,10 @@ export function useReplayPlayer({
 			setExportProgress(0.5);
 
 			// Generate filename
-			const filename = shareService.generateFilename(session.name || "practice-clip");
+			const filename = shareService.generateFilename(
+				session.name || "practice-clip",
+				blob.type,
+			);
 
 			// Share or download
 			await shareService.share(blob, filename);

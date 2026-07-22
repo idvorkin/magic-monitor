@@ -46,6 +46,7 @@ describe("useSmartZoom", () => {
 
 		// Mock fetch for model loading
 		globalThis.fetch = vi.fn().mockResolvedValue({
+			ok: true,
 			headers: {
 				get: vi.fn().mockReturnValue("8192000"), // 8MB
 			},
@@ -68,6 +69,10 @@ describe("useSmartZoom", () => {
 		Object.defineProperty(videoElement, "videoHeight", { value: 1080 });
 		Object.defineProperty(videoElement, "paused", { value: false });
 		Object.defineProperty(videoElement, "ended", { value: false });
+		// HAVE_ENOUGH_DATA - matches a real post-loadedmetadata camera stream.
+		// Tests exercising the pre-metadata guard build their own mock video
+		// with a lower readyState (see "dimensionless pre-metadata frames").
+		Object.defineProperty(videoElement, "readyState", { value: 4 });
 		Object.defineProperty(videoElement, "currentTime", {
 			value: 0,
 			writable: true,
@@ -306,6 +311,94 @@ describe("useSmartZoom", () => {
 		expect(result.current.pan.x).toBeLessThan(1);
 		expect(result.current.pan.y).toBeGreaterThan(-1);
 		expect(result.current.pan.y).toBeLessThan(1);
+	});
+
+	it("should surface a model error when the loader fails", async () => {
+		globalThis.fetch = vi.fn().mockResolvedValue({
+			ok: false,
+			status: 404,
+			headers: { get: vi.fn().mockReturnValue(null) },
+			body: {
+				getReader: vi.fn().mockReturnValue({
+					read: vi.fn().mockResolvedValueOnce({ done: true }),
+				}),
+			},
+		});
+
+		const { result } = renderHook(() =>
+			useSmartZoom({
+				videoRef: { current: videoElement },
+				enabled: true,
+			}),
+		);
+
+		expect(result.current.modelError).toBeNull();
+
+		await act(async () => {
+			await Promise.resolve();
+			await Promise.resolve();
+		});
+
+		expect(result.current.modelError).toBeTruthy();
+		expect(result.current.isModelLoading).toBe(false);
+	});
+
+	it("should skip detection for dimensionless pre-metadata frames", async () => {
+		// A video before `loadedmetadata` reports videoWidth/videoHeight 0 and
+		// readyState HAVE_METADATA(1) or lower. Calling detectForVideo on a 0x0
+		// frame crashes MediaPipe's WASM (RET_CHECK roi->width > 0) in production;
+		// here we assert the hook never calls detectForVideo until dimensions
+		// are real. Uses its own mock (mutable getters) instead of the shared
+		// `videoElement`, whose videoWidth/readyState are fixed non-writable
+		// properties.
+		let mockWidth = 0;
+		let mockHeight = 0;
+		let mockReadyState = 1; // HAVE_METADATA, no frame data yet
+		const preMetadataVideo = document.createElement("video");
+		Object.defineProperty(preMetadataVideo, "videoWidth", { get: () => mockWidth });
+		Object.defineProperty(preMetadataVideo, "videoHeight", { get: () => mockHeight });
+		Object.defineProperty(preMetadataVideo, "readyState", { get: () => mockReadyState });
+		Object.defineProperty(preMetadataVideo, "paused", { value: false });
+		Object.defineProperty(preMetadataVideo, "ended", { value: false });
+		Object.defineProperty(preMetadataVideo, "currentTime", {
+			value: 0,
+			writable: true,
+		});
+
+		renderHook(() =>
+			useSmartZoom({
+				videoRef: { current: preMetadataVideo },
+				enabled: true,
+			}),
+		);
+
+		await act(async () => {
+			await Promise.resolve();
+		});
+
+		const advancePreMetadataFrame = (timeDelta: number = 16) => {
+			if (frameCallback) {
+				preMetadataVideo.currentTime += timeDelta / 1000;
+				act(() => {
+					frameCallback?.(performance.now());
+				});
+			}
+		};
+
+		for (let i = 0; i < 5; i++) {
+			advancePreMetadataFrame();
+		}
+
+		expect(mockDetectForVideo).not.toHaveBeenCalled();
+
+		// loadedmetadata fires: real dimensions and enough data to decode a frame.
+		mockWidth = 1920;
+		mockHeight = 1080;
+		mockReadyState = 4;
+
+		advancePreMetadataFrame();
+
+		expect(mockDetectForVideo).toHaveBeenCalled();
 	});
 });
 

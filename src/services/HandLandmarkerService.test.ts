@@ -31,6 +31,7 @@ describe("HandLandmarkerService", () => {
 
 		// Mock fetch for model loading
 		globalThis.fetch = vi.fn().mockResolvedValue({
+			ok: true,
 			headers: {
 				get: vi.fn().mockReturnValue("8192"),
 			},
@@ -147,6 +148,36 @@ describe("HandLandmarkerService", () => {
 		expect(HandLandmarkerService.getModel()).toBeNull();
 	});
 
+	it("should transition to error state on HTTP error response (e.g. 404)", async () => {
+		// A 404 response still has headers/body (an HTML error page) — the
+		// loader must check response.ok before streaming, or it silently
+		// "succeeds" with a corrupted model buffer.
+		globalThis.fetch = vi.fn().mockResolvedValue({
+			ok: false,
+			status: 404,
+			headers: {
+				get: vi.fn().mockReturnValue(null),
+			},
+			body: {
+				getReader: vi.fn().mockReturnValue({
+					read: vi
+						.fn()
+						.mockResolvedValueOnce({
+							done: false,
+							value: new TextEncoder().encode("Not Found"),
+						})
+						.mockResolvedValueOnce({ done: true }),
+				}),
+			},
+		});
+
+		const result = await HandLandmarkerService.load();
+
+		expect(result).toBeNull();
+		expect(HandLandmarkerService.getState().phase).toBe("error");
+		expect(HandLandmarkerService.isReady()).toBe(false);
+	});
+
 	it("should handle fetch error gracefully", async () => {
 		globalThis.fetch = vi.fn().mockRejectedValue(new Error("Network error"));
 
@@ -165,6 +196,7 @@ describe("HandLandmarkerService", () => {
 
 		// Reset fetch mock to succeed
 		globalThis.fetch = vi.fn().mockResolvedValue({
+			ok: true,
 			headers: { get: vi.fn().mockReturnValue("8192") },
 			body: {
 				getReader: vi.fn().mockReturnValue({

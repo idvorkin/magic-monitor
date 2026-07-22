@@ -32,6 +32,7 @@ interface SettingsModalProps {
 	// Smart Zoom
 	isSmartZoom: boolean;
 	isModelLoading: boolean;
+	smartZoomModelError: string | null;
 	onSmartZoomChange: (enabled: boolean) => void;
 	smoothingPreset: SmoothingPreset;
 	onSmoothingPresetChange: (preset: SmoothingPreset) => void;
@@ -95,6 +96,7 @@ export function SettingsModal({
 	onMirrorChange,
 	isSmartZoom,
 	isModelLoading,
+	smartZoomModelError,
 	onSmartZoomChange,
 	smoothingPreset,
 	onSmoothingPresetChange,
@@ -279,6 +281,12 @@ export function SettingsModal({
 							color="green"
 						/>
 					</div>
+
+					{smartZoomModelError && (
+						<div className="text-xs text-red-400 bg-red-600/10 border border-red-500/20 rounded-lg p-2">
+							Model error: {smartZoomModelError}
+						</div>
+					)}
 
 					{/* Smoothing Algorithm (shown when Smart Zoom enabled) */}
 					{isSmartZoom && (

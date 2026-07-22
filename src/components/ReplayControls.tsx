@@ -19,6 +19,7 @@ interface ReplayControlsProps {
 	isModelLoading?: boolean;
 	loadingProgress?: number;
 	loadingPhase?: "downloading" | "initializing";
+	modelError?: string | null;
 }
 
 // ===== Helper =====
@@ -43,6 +44,7 @@ export function ReplayControls({
 	isModelLoading = false,
 	loadingProgress = 0,
 	loadingPhase = "downloading",
+	modelError = null,
 }: ReplayControlsProps) {
 	const {
 		isReady,
@@ -294,6 +296,7 @@ export function ReplayControls({
 									isModelLoading={isModelLoading}
 									loadingProgress={loadingProgress}
 									loadingPhase={loadingPhase}
+									modelError={modelError}
 								/>
 							</>
 						)}

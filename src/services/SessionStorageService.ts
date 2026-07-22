@@ -59,6 +59,34 @@ function generateId(): string {
 	return crypto.randomUUID();
 }
 
+/**
+ * Settle when the transaction does. IndexedDB can abort at commit time
+ * (quota exceeded on large blob writes) firing ONLY onabort - a promise
+ * wired to oncomplete/onerror alone hangs forever and wedges the
+ * recorder in "stopping".
+ *
+ * Exported for direct unit testing with a fake tx object, since
+ * fake-indexeddb cannot simulate commit-time aborts.
+ */
+export function settleTransaction<T>(
+	tx: IDBTransaction,
+	result: () => T,
+): Promise<T> {
+	return new Promise<T>((resolve, reject) => {
+		tx.oncomplete = () => {
+			try {
+				resolve(result());
+			} catch (err) {
+				reject(err);
+			}
+		};
+		tx.onerror = () =>
+			reject(tx.error ?? new Error("IndexedDB transaction failed"));
+		tx.onabort = () =>
+			reject(tx.error ?? new Error("IndexedDB transaction aborted (quota?)"));
+	});
+}
+
 export const SessionStorageService = {
 	/**
 	 * Initialize the database connection.
@@ -82,39 +110,31 @@ export const SessionStorageService = {
 		const id = generateId();
 		const fullSession: PracticeSession = { ...session, id };
 
-		return new Promise((resolve, reject) => {
-			// Single transaction spanning both stores for atomicity
-			const tx = db.transaction([SESSIONS_STORE, BLOBS_STORE], "readwrite");
-			const sessionsStore = tx.objectStore(SESSIONS_STORE);
-			const blobsStore = tx.objectStore(BLOBS_STORE);
+		// Single transaction spanning both stores for atomicity
+		const tx = db.transaction([SESSIONS_STORE, BLOBS_STORE], "readwrite");
+		const sessionsStore = tx.objectStore(SESSIONS_STORE);
+		const blobsStore = tx.objectStore(BLOBS_STORE);
 
-			// Queue both save operations in the same transaction
-			sessionsStore.add(fullSession);
-			blobsStore.put({ id, blob });
+		// Queue both save operations in the same transaction
+		sessionsStore.add(fullSession);
+		blobsStore.put({ id, blob });
 
-			tx.oncomplete = () => resolve(id);
-			tx.onerror = () => reject(new Error("Failed to save session with blob"));
-		});
+		return settleTransaction(tx, () => id);
 	},
 
 	/**
 	 * Save a new session. Returns the generated session ID.
 	 */
-	async saveSession(
-		session: Omit<PracticeSession, "id">,
-	): Promise<string> {
+	async saveSession(session: Omit<PracticeSession, "id">): Promise<string> {
 		const db = await getDB();
 		const id = generateId();
 		const fullSession: PracticeSession = { ...session, id };
 
-		return new Promise((resolve, reject) => {
-			const tx = db.transaction(SESSIONS_STORE, "readwrite");
-			const store = tx.objectStore(SESSIONS_STORE);
-			const request = store.add(fullSession);
+		const tx = db.transaction(SESSIONS_STORE, "readwrite");
+		const store = tx.objectStore(SESSIONS_STORE);
+		store.add(fullSession);
 
-			request.onsuccess = () => resolve(id);
-			request.onerror = () => reject(new Error("Failed to save session"));
-		});
+		return settleTransaction(tx, () => id);
 	},
 
 	/**
@@ -123,14 +143,11 @@ export const SessionStorageService = {
 	async saveBlob(id: string, blob: Blob): Promise<void> {
 		const db = await getDB();
 
-		return new Promise((resolve, reject) => {
-			const tx = db.transaction(BLOBS_STORE, "readwrite");
-			const store = tx.objectStore(BLOBS_STORE);
-			const request = store.put({ id, blob });
+		const tx = db.transaction(BLOBS_STORE, "readwrite");
+		const store = tx.objectStore(BLOBS_STORE);
+		store.put({ id, blob });
 
-			request.onsuccess = () => resolve();
-			request.onerror = () => reject(new Error("Failed to save blob"));
-		});
+		return settleTransaction(tx, () => undefined);
 	},
 
 	// ===== Read =====
@@ -141,15 +158,13 @@ export const SessionStorageService = {
 	async getSession(id: string): Promise<PracticeSession | null> {
 		const db = await getDB();
 
-		return new Promise((resolve, reject) => {
-			const tx = db.transaction(SESSIONS_STORE, "readonly");
-			const store = tx.objectStore(SESSIONS_STORE);
-			const request = store.get(id);
+		const tx = db.transaction(SESSIONS_STORE, "readonly");
+		const request = tx.objectStore(SESSIONS_STORE).get(id);
 
-			request.onsuccess = () =>
-				resolve((request.result as PracticeSession) ?? null);
-			request.onerror = () => reject(new Error("Failed to get session"));
-		});
+		return settleTransaction(
+			tx,
+			() => (request.result as PracticeSession) ?? null,
+		);
 	},
 
 	/**
@@ -158,16 +173,12 @@ export const SessionStorageService = {
 	async getBlob(id: string): Promise<Blob | null> {
 		const db = await getDB();
 
-		return new Promise((resolve, reject) => {
-			const tx = db.transaction(BLOBS_STORE, "readonly");
-			const store = tx.objectStore(BLOBS_STORE);
-			const request = store.get(id);
+		const tx = db.transaction(BLOBS_STORE, "readonly");
+		const request = tx.objectStore(BLOBS_STORE).get(id);
 
-			request.onsuccess = () => {
-				const result = request.result as { id: string; blob: Blob } | undefined;
-				resolve(result?.blob ?? null);
-			};
-			request.onerror = () => reject(new Error("Failed to get blob"));
+		return settleTransaction(tx, () => {
+			const result = request.result as { id: string; blob: Blob } | undefined;
+			return result?.blob ?? null;
 		});
 	},
 
@@ -178,20 +189,15 @@ export const SessionStorageService = {
 	async getRecentSessions(limit = 10): Promise<PracticeSession[]> {
 		const db = await getDB();
 
-		return new Promise((resolve, reject) => {
-			const tx = db.transaction(SESSIONS_STORE, "readonly");
-			const store = tx.objectStore(SESSIONS_STORE);
-			const request = store.getAll();
+		const tx = db.transaction(SESSIONS_STORE, "readonly");
+		const request = tx.objectStore(SESSIONS_STORE).getAll();
 
-			request.onsuccess = () => {
-				const sessions = (request.result as PracticeSession[])
-					.filter((s) => !s.saved)
-					.sort((a, b) => b.createdAt - a.createdAt)
-					.slice(0, limit);
-				resolve(sessions);
-			};
-			request.onerror = () => reject(new Error("Failed to get recent sessions"));
-		});
+		return settleTransaction(tx, () =>
+			(request.result as PracticeSession[])
+				.filter((s) => !s.saved)
+				.sort((a, b) => b.createdAt - a.createdAt)
+				.slice(0, limit),
+		);
 	},
 
 	/**
@@ -201,19 +207,14 @@ export const SessionStorageService = {
 	async getSavedSessions(): Promise<PracticeSession[]> {
 		const db = await getDB();
 
-		return new Promise((resolve, reject) => {
-			const tx = db.transaction(SESSIONS_STORE, "readonly");
-			const store = tx.objectStore(SESSIONS_STORE);
-			const request = store.getAll();
+		const tx = db.transaction(SESSIONS_STORE, "readonly");
+		const request = tx.objectStore(SESSIONS_STORE).getAll();
 
-			request.onsuccess = () => {
-				const sessions = (request.result as PracticeSession[])
-					.filter((s) => s.saved)
-					.sort((a, b) => b.createdAt - a.createdAt);
-				resolve(sessions);
-			};
-			request.onerror = () => reject(new Error("Failed to get saved sessions"));
-		});
+		return settleTransaction(tx, () =>
+			(request.result as PracticeSession[])
+				.filter((s) => s.saved)
+				.sort((a, b) => b.createdAt - a.createdAt),
+		);
 	},
 
 	/**
@@ -222,17 +223,13 @@ export const SessionStorageService = {
 	async getAllSessions(): Promise<PracticeSession[]> {
 		const db = await getDB();
 
-		return new Promise((resolve, reject) => {
-			const tx = db.transaction(SESSIONS_STORE, "readonly");
-			const store = tx.objectStore(SESSIONS_STORE);
-			const request = store.getAll();
+		const tx = db.transaction(SESSIONS_STORE, "readonly");
+		const request = tx.objectStore(SESSIONS_STORE).getAll();
 
-			request.onsuccess = () => {
-				const sessions = request.result as PracticeSession[];
-				sessions.sort((a, b) => b.createdAt - a.createdAt);
-				resolve(sessions);
-			};
-			request.onerror = () => reject(new Error("Failed to get all sessions"));
+		return settleTransaction(tx, () => {
+			const sessions = request.result as PracticeSession[];
+			sessions.sort((a, b) => b.createdAt - a.createdAt);
+			return sessions;
 		});
 	},
 
@@ -253,14 +250,10 @@ export const SessionStorageService = {
 
 		const updated = { ...existing, ...updates, id }; // Preserve ID
 
-		return new Promise((resolve, reject) => {
-			const tx = db.transaction(SESSIONS_STORE, "readwrite");
-			const store = tx.objectStore(SESSIONS_STORE);
-			const request = store.put(updated);
+		const tx = db.transaction(SESSIONS_STORE, "readwrite");
+		tx.objectStore(SESSIONS_STORE).put(updated);
 
-			request.onsuccess = () => resolve();
-			request.onerror = () => reject(new Error("Failed to update session"));
-		});
+		return settleTransaction(tx, () => undefined);
 	},
 
 	/**
@@ -289,14 +282,10 @@ export const SessionStorageService = {
 	async deleteSession(id: string): Promise<void> {
 		const db = await getDB();
 
-		return new Promise((resolve, reject) => {
-			const tx = db.transaction(SESSIONS_STORE, "readwrite");
-			const store = tx.objectStore(SESSIONS_STORE);
-			const request = store.delete(id);
+		const tx = db.transaction(SESSIONS_STORE, "readwrite");
+		tx.objectStore(SESSIONS_STORE).delete(id);
 
-			request.onsuccess = () => resolve();
-			request.onerror = () => reject(new Error("Failed to delete session"));
-		});
+		return settleTransaction(tx, () => undefined);
 	},
 
 	/**
@@ -305,14 +294,10 @@ export const SessionStorageService = {
 	async deleteBlob(id: string): Promise<void> {
 		const db = await getDB();
 
-		return new Promise((resolve, reject) => {
-			const tx = db.transaction(BLOBS_STORE, "readwrite");
-			const store = tx.objectStore(BLOBS_STORE);
-			const request = store.delete(id);
+		const tx = db.transaction(BLOBS_STORE, "readwrite");
+		tx.objectStore(BLOBS_STORE).delete(id);
 
-			request.onsuccess = () => resolve();
-			request.onerror = () => reject(new Error("Failed to delete blob"));
-		});
+		return settleTransaction(tx, () => undefined);
 	},
 
 	/**
@@ -322,19 +307,16 @@ export const SessionStorageService = {
 	async deleteSessionWithBlob(id: string): Promise<void> {
 		const db = await getDB();
 
-		return new Promise((resolve, reject) => {
-			// Single transaction spanning both stores for atomicity
-			const tx = db.transaction([SESSIONS_STORE, BLOBS_STORE], "readwrite");
-			const sessionsStore = tx.objectStore(SESSIONS_STORE);
-			const blobsStore = tx.objectStore(BLOBS_STORE);
+		// Single transaction spanning both stores for atomicity
+		const tx = db.transaction([SESSIONS_STORE, BLOBS_STORE], "readwrite");
+		const sessionsStore = tx.objectStore(SESSIONS_STORE);
+		const blobsStore = tx.objectStore(BLOBS_STORE);
 
-			// Queue both delete operations in the same transaction
-			sessionsStore.delete(id);
-			blobsStore.delete(id);
+		// Queue both delete operations in the same transaction
+		sessionsStore.delete(id);
+		blobsStore.delete(id);
 
-			tx.oncomplete = () => resolve();
-			tx.onerror = () => reject(new Error("Failed to delete session with blob"));
-		});
+		return settleTransaction(tx, () => undefined);
 	},
 
 	// ===== Pruning =====
@@ -364,9 +346,7 @@ export const SessionStorageService = {
 		}
 
 		// Delete old sessions and their blobs
-		await Promise.all(
-			toDelete.map((id) => this.deleteSessionWithBlob(id)),
-		);
+		await Promise.all(toDelete.map((id) => this.deleteSessionWithBlob(id)));
 
 		return toDelete.length;
 	},
@@ -394,18 +374,15 @@ export const SessionStorageService = {
 	async clear(): Promise<void> {
 		const db = await getDB();
 
-		return new Promise((resolve, reject) => {
-			const tx = db.transaction([SESSIONS_STORE, BLOBS_STORE], "readwrite");
+		const tx = db.transaction([SESSIONS_STORE, BLOBS_STORE], "readwrite");
 
-			const sessionsStore = tx.objectStore(SESSIONS_STORE);
-			const blobsStore = tx.objectStore(BLOBS_STORE);
+		const sessionsStore = tx.objectStore(SESSIONS_STORE);
+		const blobsStore = tx.objectStore(BLOBS_STORE);
 
-			sessionsStore.clear();
-			blobsStore.clear();
+		sessionsStore.clear();
+		blobsStore.clear();
 
-			tx.oncomplete = () => resolve();
-			tx.onerror = () => reject(new Error("Failed to clear storage"));
-		});
+		return settleTransaction(tx, () => undefined);
 	},
 
 	/**

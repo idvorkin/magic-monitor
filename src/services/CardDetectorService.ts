@@ -6,27 +6,27 @@
  */
 import * as ort from "onnxruntime-web/webgpu";
 
-ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.3/dist/";
+ort.env.wasm.wasmPaths =
+	"https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.3/dist/";
+
 import {
-	cardToLabel,
-	classIndexToCard,
 	type BoundingBox,
 	type CardDetection,
+	cardToLabel,
+	classIndexToCard,
 } from "../types/cards";
+import {
+	createModelLoader,
+	fetchModelBytes,
+	type LoadingState,
+} from "./createModelLoader";
 
-export type LoadingPhase = "idle" | "downloading" | "initializing" | "ready" | "error";
-
-export interface LoadingState {
-	phase: LoadingPhase;
-	progress: number; // 0-100 for downloading phase
-	error?: Error;
-}
-
-type LoadingListener = (state: LoadingState) => void;
+export type { LoadingPhase, LoadingState } from "./createModelLoader";
 
 // YOLO model input size (square) — must match the trained model's input dimensions
 const MODEL_INPUT_SIZE = 640;
-const MODEL_PATH = "https://idvorkin-models.s3.amazonaws.com/card-detector-yolo26s.onnx";
+const MODEL_PATH =
+	"https://idvorkin-models.s3.amazonaws.com/card-detector-yolo26s.onnx";
 
 // NMS parameters
 const NMS_IOU_THRESHOLD = 0.5;
@@ -65,12 +65,17 @@ function computeIoU(a: BoundingBox, b: BoundingBox): number {
 /**
  * Non-max suppression: remove overlapping detections, keep highest confidence.
  */
-export function nms(detections: CardDetection[], iouThreshold = NMS_IOU_THRESHOLD): CardDetection[] {
+export function nms(
+	detections: CardDetection[],
+	iouThreshold = NMS_IOU_THRESHOLD,
+): CardDetection[] {
 	const sorted = [...detections].sort((a, b) => b.confidence - a.confidence);
 	const kept: CardDetection[] = [];
 
 	for (const det of sorted) {
-		const dominated = kept.some((k) => computeIoU(k.bbox, det.bbox) > iouThreshold);
+		const dominated = kept.some(
+			(k) => computeIoU(k.bbox, det.bbox) > iouThreshold,
+		);
 		if (!dominated) {
 			kept.push(det);
 		}
@@ -140,117 +145,59 @@ export function parseYoloOutput(
 	return nms(detections);
 }
 
-class CardDetectorServiceImpl {
-	private session: ort.InferenceSession | null = null;
-	private loadingState: LoadingState = { phase: "idle", progress: 0 };
-	private loadPromise: Promise<ort.InferenceSession | null> | null = null;
-	private listeners: Set<LoadingListener> = new Set();
+const loader = createModelLoader<ort.InferenceSession>({
+	name: "CardDetectorService",
+	fetchAndInit: async (reportProgress, setPhase) => {
+		// Fetch model with progress tracking
+		const modelBuffer = await fetchModelBytes(MODEL_PATH, reportProgress);
 
+		setPhase("initializing");
+
+		console.log("[CardDetectorService] Creating ONNX inference session...");
+		const session = await ort.InferenceSession.create(modelBuffer.buffer, {
+			executionProviders: ["webgpu", "webgl", "wasm"],
+			graphOptimizationLevel: "all",
+		});
+
+		console.log("[CardDetectorService] ONNX session created successfully");
+		console.log("[CardDetectorService] Input names:", session.inputNames);
+		console.log("[CardDetectorService] Output names:", session.outputNames);
+		console.log(
+			`[CardDetectorService] Model input size: ${MODEL_INPUT_SIZE}x${MODEL_INPUT_SIZE}`,
+		);
+
+		return session;
+	},
+});
+
+class CardDetectorServiceImpl {
 	// Reusable canvas for preprocessing
 	private preprocessCanvas: HTMLCanvasElement | null = null;
 	private preprocessCtx: CanvasRenderingContext2D | null = null;
 
 	getState(): LoadingState {
-		return this.loadingState;
+		return loader.getState();
 	}
 
 	getSession(): ort.InferenceSession | null {
-		return this.session;
+		return loader.getModel();
 	}
 
-	subscribe(listener: LoadingListener): () => void {
-		this.listeners.add(listener);
-		listener(this.loadingState);
-		return () => {
-			this.listeners.delete(listener);
-		};
+	subscribe(listener: Parameters<typeof loader.subscribe>[0]): () => void {
+		return loader.subscribe(listener);
 	}
 
-	private notifyListeners() {
-		for (const listener of this.listeners) {
-			listener(this.loadingState);
-		}
-	}
-
-	private updateState(state: Partial<LoadingState>) {
-		this.loadingState = { ...this.loadingState, ...state };
-		this.notifyListeners();
-	}
-
-	async load(): Promise<ort.InferenceSession | null> {
-		if (this.session) return this.session;
-		if (this.loadPromise) return this.loadPromise;
-
-		this.loadPromise = this.loadModel();
-		return this.loadPromise;
-	}
-
-	private async loadModel(): Promise<ort.InferenceSession | null> {
-		try {
-			this.updateState({ phase: "downloading", progress: 0 });
-
-			// Fetch model with progress tracking
-			const response = await fetch(MODEL_PATH);
-
-			if (!response.ok) {
-				throw new Error(`Failed to fetch model: ${response.status} ${response.statusText}`);
-			}
-
-			const contentLength = response.headers.get("Content-Length");
-			const total = contentLength ? parseInt(contentLength, 10) : 0;
-
-			if (!response.body) {
-				throw new Error("Response body is null");
-			}
-
-			const reader = response.body.getReader();
-			let receivedLength = 0;
-			const chunks: Uint8Array[] = [];
-
-			while (true) {
-				const { done, value } = await reader.read();
-				if (done) break;
-
-				chunks.push(value);
-				receivedLength += value.length;
-
-				if (total > 0) {
-					this.updateState({ progress: Math.round((receivedLength / total) * 100) });
-				}
-			}
-
-			const modelBuffer = new Uint8Array(receivedLength);
-			let position = 0;
-			for (const chunk of chunks) {
-				modelBuffer.set(chunk, position);
-				position += chunk.length;
-			}
-
-			this.updateState({ phase: "initializing", progress: 100 });
-
-			console.log("[CardDetectorService] Creating ONNX inference session...");
-			this.session = await ort.InferenceSession.create(modelBuffer.buffer, {
-				executionProviders: ["webgpu", "webgl", "wasm"],
-				graphOptimizationLevel: "all",
-			});
-
-			console.log("[CardDetectorService] ONNX session created successfully");
-			console.log("[CardDetectorService] Input names:", this.session.inputNames);
-			console.log("[CardDetectorService] Output names:", this.session.outputNames);
-			console.log(`[CardDetectorService] Model input size: ${MODEL_INPUT_SIZE}x${MODEL_INPUT_SIZE}`);
-
-			this.updateState({ phase: "ready" });
-			return this.session;
-		} catch (error) {
-			console.error("[CardDetectorService] Error loading model:", error);
-			this.updateState({ phase: "error", error: error as Error });
-			this.loadPromise = null; // Allow retry
-			return null;
-		}
+	load(): Promise<ort.InferenceSession | null> {
+		return loader.load();
 	}
 
 	// Cached letterbox geometry for debug snapshot
-	private lastLetterbox: LetterboxInfo = { offsetX: 0, offsetY: 0, scaledW: MODEL_INPUT_SIZE, scaledH: MODEL_INPUT_SIZE };
+	private lastLetterbox: LetterboxInfo = {
+		offsetX: 0,
+		offsetY: 0,
+		scaledW: MODEL_INPUT_SIZE,
+		scaledH: MODEL_INPUT_SIZE,
+	};
 
 	/**
 	 * Run card detection on a video frame.
@@ -260,21 +207,26 @@ class CardDetectorServiceImpl {
 		source: HTMLVideoElement | HTMLCanvasElement,
 		confidenceThreshold = 0.5,
 	): Promise<CardDetection[]> {
-		if (!this.session) return [];
+		const session = loader.getModel();
+		if (!session) return [];
 
 		// Preprocess: letterbox resize to MODEL_INPUT_SIZE x MODEL_INPUT_SIZE
 		if (!this.preprocessCanvas) {
 			this.preprocessCanvas = document.createElement("canvas");
 			this.preprocessCanvas.width = MODEL_INPUT_SIZE;
 			this.preprocessCanvas.height = MODEL_INPUT_SIZE;
-			this.preprocessCtx = this.preprocessCanvas.getContext("2d", { willReadFrequently: true });
+			this.preprocessCtx = this.preprocessCanvas.getContext("2d", {
+				willReadFrequently: true,
+			});
 		}
 
 		const ctx = this.preprocessCtx;
 		if (!ctx) return [];
 
-		const srcW = source instanceof HTMLVideoElement ? source.videoWidth : source.width;
-		const srcH = source instanceof HTMLVideoElement ? source.videoHeight : source.height;
+		const srcW =
+			source instanceof HTMLVideoElement ? source.videoWidth : source.width;
+		const srcH =
+			source instanceof HTMLVideoElement ? source.videoHeight : source.height;
 
 		// Letterbox: scale to fit, center with gray padding (YOLO convention)
 		const scale = Math.min(MODEL_INPUT_SIZE / srcW, MODEL_INPUT_SIZE / srcH);
@@ -288,7 +240,12 @@ class CardDetectorServiceImpl {
 		ctx.imageSmoothingEnabled = false; // nearest-neighbor to match training
 		ctx.drawImage(source, offsetX, offsetY, scaledW, scaledH);
 
-		const imageData = ctx.getImageData(0, 0, MODEL_INPUT_SIZE, MODEL_INPUT_SIZE);
+		const imageData = ctx.getImageData(
+			0,
+			0,
+			MODEL_INPUT_SIZE,
+			MODEL_INPUT_SIZE,
+		);
 
 		// Convert RGBA to RGB float32 tensor [1, 3, H, W] normalized to [0, 1]
 		const { data } = imageData;
@@ -301,12 +258,17 @@ class CardDetectorServiceImpl {
 			float32Data[2 * numPixels + i] = data[i * 4 + 2] / 255; // B
 		}
 
-		const inputTensor = new ort.Tensor("float32", float32Data, [1, 3, MODEL_INPUT_SIZE, MODEL_INPUT_SIZE]);
+		const inputTensor = new ort.Tensor("float32", float32Data, [
+			1,
+			3,
+			MODEL_INPUT_SIZE,
+			MODEL_INPUT_SIZE,
+		]);
 
-		const inputName = this.session.inputNames[0];
-		const results = await this.session.run({ [inputName]: inputTensor });
+		const inputName = session.inputNames[0];
+		const results = await session.run({ [inputName]: inputTensor });
 
-		const outputName = this.session.outputNames[0];
+		const outputName = session.outputNames[0];
 		const output = results[outputName];
 		const outputData = output.data as Float32Array;
 
@@ -314,7 +276,12 @@ class CardDetectorServiceImpl {
 		const numDetections = output.dims[1];
 		const letterbox: LetterboxInfo = { offsetX, offsetY, scaledW, scaledH };
 
-		const detections = parseYoloOutput(outputData, numDetections, confidenceThreshold, letterbox);
+		const detections = parseYoloOutput(
+			outputData,
+			numDetections,
+			confidenceThreshold,
+			letterbox,
+		);
 
 		// Cache for debug snapshot
 		this.lastDetections = detections;
@@ -340,9 +307,10 @@ class CardDetectorServiceImpl {
 		const srcWidth = this.lastSourceWidth;
 		const srcHeight = this.lastSourceHeight;
 		const detections = this.lastDetections;
-		const confidenceThreshold = detections.length > 0
-			? Math.min(...detections.map((d) => d.confidence))
-			: 0;
+		const confidenceThreshold =
+			detections.length > 0
+				? Math.min(...detections.map((d) => d.confidence))
+				: 0;
 		const canvas = this.preprocessCanvas;
 		const ctx = this.preprocessCtx;
 		if (!canvas || !ctx) return;
@@ -400,7 +368,9 @@ class CardDetectorServiceImpl {
 
 		// Burn in detection list at bottom
 		if (detections.length > 0) {
-			const detLines = detections.map((d) => `${d.label} ${(d.confidence * 100).toFixed(0)}%`);
+			const detLines = detections.map(
+				(d) => `${d.label} ${(d.confidence * 100).toFixed(0)}%`,
+			);
 			const listY = debugSize - detLines.length * 20 - 10;
 			dCtx.fillStyle = "rgba(0,0,0,0.7)";
 			dCtx.fillRect(0, listY, debugSize, detLines.length * 20 + 10);
@@ -420,24 +390,23 @@ class CardDetectorServiceImpl {
 		console.log("[CardDetectorService] Debug snapshot saved", {
 			source: `${srcWidth}x${srcHeight}`,
 			modelInput: `${MODEL_INPUT_SIZE}x${MODEL_INPUT_SIZE}`,
-			detections: detections.map((d) => `${d.label}(${d.confidence.toFixed(2)})`),
+			detections: detections.map(
+				(d) => `${d.label}(${d.confidence.toFixed(2)})`,
+			),
 		});
 	}
 
 	isReady(): boolean {
-		return this.loadingState.phase === "ready" && this.session !== null;
+		return loader.isReady();
 	}
 
 	isLoading(): boolean {
-		return this.loadingState.phase === "downloading" || this.loadingState.phase === "initializing";
+		return loader.isLoading();
 	}
 
 	_reset(): void {
-		this.session?.release();
-		this.session = null;
-		this.loadingState = { phase: "idle", progress: 0 };
-		this.loadPromise = null;
-		this.listeners.clear();
+		loader.getModel()?.release();
+		loader._reset();
 		this.preprocessCanvas = null;
 		this.preprocessCtx = null;
 	}

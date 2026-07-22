@@ -18,13 +18,8 @@ interface SessionPickerProps {
 	onSelectSession: (sessionId: string, startTime?: number) => void;
 	recentSessions: PracticeSession[];
 	savedSessions: PracticeSession[];
-	currentRecordingThumbnail?: string;
-	currentRecordingDuration?: number;
-	isRecording?: boolean;
 	onRefresh: () => void;
 	activeSessionId?: string;
-	/** Stop current recording and view it immediately */
-	onStopAndViewRecording?: () => void;
 }
 
 type PickerView = "list" | "timeline";
@@ -54,12 +49,8 @@ export function SessionPicker({
 	onSelectSession,
 	recentSessions,
 	savedSessions,
-	currentRecordingThumbnail,
-	currentRecordingDuration = 0,
-	isRecording = false,
 	onRefresh,
 	activeSessionId,
-	onStopAndViewRecording,
 }: SessionPickerProps) {
 	const containerRef = useFocusTrap({ isOpen, onClose });
 
@@ -210,38 +201,6 @@ export function SessionPicker({
 
 					{view === "list" ? (
 						<div className="space-y-6">
-							{/* Current Recording */}
-							{isRecording && currentRecordingThumbnail && (
-								<div>
-									<h3 className="text-sm font-medium text-gray-400 mb-3">
-										Recording Now
-									</h3>
-									<div className="flex gap-4">
-										<button
-											type="button"
-											onClick={onStopAndViewRecording}
-											className="relative cursor-pointer hover:opacity-80 transition-opacity text-left"
-											title="Stop recording and view"
-										>
-											<div className="w-32 h-20 rounded-lg overflow-hidden bg-gray-800 relative">
-												<img
-													src={currentRecordingThumbnail}
-													alt="Current recording"
-													className="w-full h-full object-contain"
-												/>
-												<div className="absolute top-2 left-2 flex items-center gap-1.5 bg-red-600 text-white text-xs px-2 py-0.5 rounded-full animate-pulse">
-													<span className="w-1.5 h-1.5 bg-white rounded-full" />
-													REC
-												</div>
-											</div>
-											<p className="text-xs text-gray-400 mt-1 text-center">
-												{formatDuration(currentRecordingDuration)}
-											</p>
-										</button>
-									</div>
-								</div>
-							)}
-
 							{/* Recent Sessions */}
 							<div>
 								<h3 className="text-sm font-medium text-gray-400 mb-3">

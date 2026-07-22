@@ -1,9 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import {
-	CardDetectorService,
-	type LoadingState,
-} from "../services/CardDetectorService";
+import { CardDetectorService } from "../services/CardDetectorService";
 import type { CardDetection } from "../types/cards";
+import { useModelLoadingState } from "./useModelLoadingState";
 
 interface CardDetectionConfig {
 	videoRef: React.RefObject<HTMLVideoElement | null>;
@@ -16,10 +14,13 @@ export function useCardDetection({
 	enabled,
 	confidenceThreshold = 0.5,
 }: CardDetectionConfig) {
-	const [isModelLoading, setIsModelLoading] = useState(false);
-	const [loadingProgress, setLoadingProgress] = useState(0);
-	const [loadingPhase, setLoadingPhase] = useState<"downloading" | "initializing">("downloading");
-	const [modelError, setModelError] = useState<string | null>(null);
+	const { isModelLoading, loadingProgress, loadingPhase, modelError } =
+		useModelLoadingState(CardDetectorService, { enabled });
+
+	// Frame-level detection errors (rejected detect() calls once the model is
+	// loaded and running) — a different failure class from modelError above,
+	// which only tracks load-time failures via CardDetectorService.subscribe.
+	const [detectError, setDetectError] = useState<string | null>(null);
 
 	// Detections stored in ref for 60fps reads (overlay), throttled to state for UI
 	const detectionsRef = useRef<CardDetection[]>([]);
@@ -35,24 +36,6 @@ export function useCardDetection({
 	// Throttle React state updates to ~10Hz (every 3 frames at 30fps)
 	const UI_UPDATE_INTERVAL = 3;
 
-	// Subscribe to service loading state
-	useEffect(() => {
-		const handleStateChange = (state: LoadingState) => {
-			setIsModelLoading(state.phase === "downloading" || state.phase === "initializing");
-			setLoadingProgress(state.progress);
-			setLoadingPhase(state.phase === "initializing" ? "initializing" : "downloading");
-			setModelError(state.phase === "error" ? (state.error?.message ?? "Unknown error") : null);
-		};
-
-		const unsubscribe = CardDetectorService.subscribe(handleStateChange);
-
-		if (enabled) {
-			CardDetectorService.load();
-		}
-
-		return unsubscribe;
-	}, [enabled]);
-
 	// Detection loop
 	// biome-ignore lint/correctness/useExhaustiveDependencies: isModelLoading triggers re-run when model loads
 	useEffect(() => {
@@ -64,7 +47,13 @@ export function useCardDetection({
 			if (!running) return;
 
 			const video = videoRef.current;
-			if (!video || video.paused || video.ended) {
+			if (
+				!video ||
+				video.paused ||
+				video.ended ||
+				video.readyState < 2 ||
+				video.videoWidth === 0
+			) {
 				requestRef.current = requestAnimationFrame(() => {
 					detect();
 				});
@@ -79,14 +68,34 @@ export function useCardDetection({
 				// Skip every other frame to reduce GPU contention with hand tracking
 				if (frameCountRef.current % 2 === 0) {
 					const t0 = performance.now();
-					const results = await CardDetectorService.detect(video, confidenceThreshold);
-					detectTimeMsRef.current = performance.now() - t0;
+					try {
+						const results = await CardDetectorService.detect(
+							video,
+							confidenceThreshold,
+						);
+						detectTimeMsRef.current = performance.now() - t0;
 
-					detectionsRef.current = results;
+						detectionsRef.current = results;
 
-					// Throttle React state updates
-					if (frameCountRef.current % UI_UPDATE_INTERVAL === 0) {
-						setDetections(results);
+						// Clear any previous frame-level error now that detection succeeded.
+						// Functional update instead of reading `detectError` from the
+						// closure: this effect only depends on [enabled, videoRef,
+						// confidenceThreshold, isModelLoading], so a closure read would be
+						// stale, and adding detectError to the deps would tear down and
+						// restart the whole rAF loop every time it's cleared.
+						setDetectError((prev) => (prev === null ? prev : null));
+
+						// Throttle React state updates
+						if (frameCountRef.current % UI_UPDATE_INTERVAL === 0) {
+							setDetections(results);
+						}
+					} catch (err) {
+						// Keep the loop alive: one bad frame (WebGPU device loss, transient
+						// ORT error) must not kill card detection permanently.
+						console.error("Card detection frame failed:", err);
+						setDetectError(
+							err instanceof Error ? err.message : "Detection failed",
+						);
 					}
 				}
 			}
@@ -108,6 +117,7 @@ export function useCardDetection({
 	useEffect(() => {
 		if (!enabled) {
 			detectionsRef.current = [];
+			// eslint-disable-next-line react-hooks/set-state-in-effect -- clearing detections on disable
 			setDetections([]);
 		}
 	}, [enabled]);
@@ -117,6 +127,7 @@ export function useCardDetection({
 		loadingProgress,
 		loadingPhase,
 		modelError,
+		detectError,
 		detections,
 		detectionsRef,
 		detectTimeMsRef,
