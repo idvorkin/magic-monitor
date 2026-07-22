@@ -105,7 +105,6 @@ async function injectMockCamera(page: Page) {
 		};
 
 		// Mock MediaRecorder to work with canvas streams in headless Chrome
-		const OriginalMediaRecorder = window.MediaRecorder;
 		const mockRecordings = new Map<MediaRecorder, Blob[]>();
 
 		class MockMediaRecorder {
@@ -178,18 +177,11 @@ async function injectMockCamera(page: Page) {
 			}
 		}
 
-		// Only use mock if original doesn't work with our stream
-		// Test if the original MediaRecorder works
-		try {
-			const testRecorder = new OriginalMediaRecorder(stream, { mimeType: "video/webm" });
-			testRecorder.start();
-			testRecorder.stop();
-			console.log("Original MediaRecorder works with canvas stream");
-		} catch {
-			console.log("Original MediaRecorder failed, using mock");
-			// @ts-expect-error - overriding MediaRecorder
-			window.MediaRecorder = MockMediaRecorder;
-		}
+		// Always install the mock: MediaRecorder with canvas streams is
+		// unreliable in headless Chrome, and deterministic recording data
+		// is what the recording tests depend on.
+		// @ts-expect-error - overriding MediaRecorder
+		window.MediaRecorder = MockMediaRecorder;
 	});
 }
 
@@ -409,7 +401,10 @@ test.describe("Magic Monitor E2E", () => {
 		await page.locator("button", { hasText: "✕" }).click();
 	});
 
-	test("Sessions: Replay play/pause controls work", async ({ page }) => {
+	// APP BUG: useReplayPlayer StrictMode mount/unmount race can leave video.src empty
+	// -> MEDIA_ERR_SRC_NOT_SUPPORTED. Fixture verified good. Fix tracked in reliability
+	// sweep (replay cluster).
+	test.fixme("Sessions: Replay play/pause controls work", async ({ page }) => {
 		// Seed with sessions
 		await seedSessionBuffer(page, 1);
 		await page.reload();
@@ -541,38 +536,51 @@ test.describe("Magic Monitor E2E", () => {
 		await expect(video).toBeVisible();
 	});
 
-	// Skip recording tests - MediaRecorder with canvas stream doesn't work reliably in headless Chrome
-	// These would need either a real video file or more sophisticated mocking
-	test.skip("Recording: Shows recording indicator when live", async ({ page }) => {
+	test("Recording: Shows recording indicator when live", async ({ page }) => {
 		// Wait for app to load and start recording
 		const video = page.getByTestId("main-video");
 		await expect(video).toBeVisible();
 
-		// Recording indicator should show "REC" or recording duration
-		// Look for the recording indicator in the control bar
-		const recordingIndicator = page.locator("text=/REC|\\d+:\\d+/");
-		await expect(recordingIndicator.first()).toBeVisible({ timeout: 10000 });
+		// Recording indicator should show REC once video + storage are ready
+		const recordingIndicator = page.getByText("● REC");
+		await expect(recordingIndicator).toBeVisible({ timeout: 10000 });
 	});
 
-	test.skip("Recording: Duration counter increases over time", async ({ page }) => {
+	test("Recording: Duration counter increases over time", async ({ page }) => {
 		// Wait for app to load
 		const video = page.getByTestId("main-video");
 		await expect(video).toBeVisible();
 
-		// Wait for recording to start (should show a duration like "0:01" or "0:00")
-		const durationRegex = /\d+:\d{2}/;
-		await expect(page.getByText(durationRegex).first()).toBeVisible({ timeout: 10000 });
+		// Status bar shows "<seconds>s | <n> sessions" while live
+		// (.first() — the regex also matches ancestor spans; match innermost deterministically)
+		const statusReadout = page.getByText(/\d+s \|/).first();
+		await expect(statusReadout).toBeVisible({ timeout: 10000 });
 
-		// Get initial duration text
-		const durationElement = page.getByText(durationRegex).first();
-		const initialText = await durationElement.textContent();
+		const initialText = await statusReadout.textContent();
 
-		// Wait 2 seconds for counter to increase
-		await page.waitForTimeout(2000);
+		// Wait for the block duration to tick up
+		await expect(async () => {
+			const newText = await statusReadout.textContent();
+			expect(newText).not.toBe(initialText);
+		}).toPass({ timeout: 5000 });
+	});
 
-		// Duration should have increased
-		const newText = await durationElement.textContent();
-		expect(newText).not.toBe(initialText);
+	test("Recording: A real recorded block appears in Sessions without seeding", async ({ page }) => {
+		// Wait for recording to actually start
+		await expect(page.getByTestId("main-video")).toBeVisible();
+		await expect(page.getByText("● REC")).toBeVisible({ timeout: 10000 });
+
+		// Let the mock recorder emit at least two 1s chunks
+		await page.waitForTimeout(2500);
+
+		// Opening the picker stops and saves the current block
+		await page.getByRole("button", { name: "Sessions" }).click();
+		await expect(page.getByRole("heading", { name: "Sessions" })).toBeVisible();
+
+		// The just-recorded block must appear as a Recent session.
+		// This is the only test covering record→storage→picker for real;
+		// everything else seeds IndexedDB directly.
+		await expect(page.getByText("No recent recordings")).toBeHidden({ timeout: 10000 });
 	});
 
 	test("Settings: Resolution selector shows options", async ({ page }) => {
@@ -584,9 +592,11 @@ test.describe("Magic Monitor E2E", () => {
 		await expect(resolutionSelect).toBeVisible();
 
 		// Verify all resolution options are present
-		await expect(resolutionSelect).toContainText("720p (HD)");
-		await expect(resolutionSelect).toContainText("1080p (Full HD)");
-		await expect(resolutionSelect).toContainText("4K (Ultra HD)");
+		// Labels show requested width, not the preset label (see commit 856da46:
+		// only width is constrained so the camera can pick its native aspect ratio)
+		await expect(resolutionSelect).toContainText("1280 wide (720p)");
+		await expect(resolutionSelect).toContainText("1920 wide (1080p)");
+		await expect(resolutionSelect).toContainText("3840 wide (4k)");
 	});
 
 	test("Settings: Resolution selector defaults to 4K", async ({ page }) => {

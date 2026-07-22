@@ -61,7 +61,7 @@ async function injectCounterCamera(page: Page) {
 		draw();
 
 		// Expose counter for test verification
-		(window as Window & { counterCamera: { getCounter: () => number; reset: () => void } }).counterCamera = {
+		(window as unknown as Window & { counterCamera: { getCounter: () => number; reset: () => void } }).counterCamera = {
 			getCounter: () => counter,
 			reset: () => {
 				startTime = Date.now();
@@ -273,7 +273,7 @@ test.describe("Session Recorder with Counter Video", () => {
 		await expect(page.getByText("REPLAY MODE")).toBeHidden({ timeout: 5000 });
 	});
 
-	test("Replay controls can be floated and dragged", async ({ page }) => {
+	test("Replay controls are draggable", async ({ page }) => {
 		// Navigate first, then seed sessions
 		await page.goto("/");
 		await seedSessionBuffer(page, 1);
@@ -292,23 +292,31 @@ test.describe("Session Recorder with Counter Video", () => {
 		await timelineThumbs.first().click();
 		await expect(page.getByText("REPLAY MODE")).toBeVisible();
 
-		// Find the float button
-		const floatButton = page.getByLabel("Float controls");
-		await expect(floatButton).toBeVisible();
-
-		// Click to float
-		await floatButton.click();
-
-		// Now should show dock button
-		await expect(page.getByLabel("Dock controls")).toBeVisible();
-
-		// The control panel should now have a drag handle
-		const dragHandle = page.locator(".w-12.h-1.bg-gray-600.rounded-full");
+		// Controls are always docked (float/dock toggle was removed, eb54b7f) but
+		// remain draggable via the grip handle
+		const dragHandle = page.getByTitle("Drag to move");
 		await expect(dragHandle).toBeVisible();
 
-		// Click dock to return to normal
-		await page.getByLabel("Dock controls").click();
-		await expect(page.getByLabel("Float controls")).toBeVisible();
+		const startBox = await dragHandle.boundingBox();
+		expect(startBox).toBeTruthy();
+		if (!startBox) return;
+
+		const startX = startBox.x + startBox.width / 2;
+		const startY = startBox.y + startBox.height / 2;
+
+		// Drag the panel by (40, 30)
+		await page.mouse.move(startX, startY);
+		await page.mouse.down();
+		await page.mouse.move(startX + 40, startY + 30, { steps: 5 });
+		await page.mouse.up();
+
+		const endBox = await dragHandle.boundingBox();
+		expect(endBox).toBeTruthy();
+		if (!endBox) return;
+
+		// Panel should have moved from its original position
+		expect(endBox.x).not.toBe(startBox.x);
+		expect(endBox.y).not.toBe(startBox.y);
 
 		// Exit replay
 		await page.locator("button", { hasText: "✕" }).click();
@@ -428,8 +436,10 @@ test.describe("Session Recorder with Counter Video", () => {
 		const timelineTrack = page.locator(".bg-gray-700.rounded-full").first();
 		await expect(timelineTrack).toBeVisible();
 
-		// Get the time display to monitor position changes
-		const timeDisplay = page.locator(".font-mono").first();
+		// Get the time display to monitor position changes.
+		// `.font-mono` alone is ambiguous (also matches the empty status-bar div and
+		// the "REPLAY MODE" banner), so scope to the element with the actual time text.
+		const timeDisplay = page.locator(".font-mono", { hasText: /^\d+:\d{2}\.\d/ });
 		await expect(timeDisplay).toBeVisible();
 
 		// Get initial time

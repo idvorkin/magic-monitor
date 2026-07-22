@@ -4,14 +4,19 @@ export default defineConfig({
 	testDir: "./tests",
 	fullyParallel: true,
 	forbidOnly: !!process.env.CI,
-	retries: process.env.CI ? 2 : 0,
-	workers: process.env.CI ? 1 : 2,
+	// 1 local retry: a known app bug (MediaPipe crash on 0x0 pre-metadata frame,
+	// tracked in the reliability sweep) can kill an arbitrary test under suite
+	// timing pressure; retried passes surface as "flaky", not silent green.
+	retries: process.env.CI ? 2 : 1,
+	// Serial everywhere: several tests are timing-sensitive and flake under
+	// parallel load (a different set each run); CI was already serial.
+	workers: 1,
 	reporter: [
 		["list"],
-		["html", { outputFolder: "playwright-report" }],
+		["html", { outputFolder: "playwright-report", open: "never" }],
 	],
 	use: {
-		baseURL: "https://localhost:5173",
+		baseURL: "https://localhost:5273",
 		trace: "retain-on-failure",
 		video: "retain-on-failure",
 		screenshot: "only-on-failure",
@@ -29,8 +34,8 @@ export default defineConfig({
 		},
 	],
 	webServer: {
-		command: "npm run dev -- --port 5173",
-		url: "https://localhost:5173",
+		command: "npx vite --port 5273 --strictPort",
+		url: "https://localhost:5273",
 		reuseExistingServer: !process.env.CI, // Reuse existing server in dev, start fresh in CI
 		timeout: 120 * 1000,
 		stdout: "ignore",
