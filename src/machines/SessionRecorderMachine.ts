@@ -9,6 +9,11 @@ export type SessionRecorderState =
 	| { type: "recording"; blockStart: number }
 	| { type: "stopping" };
 
+export type NotRecordingReason =
+	| "storage-error"
+	| "recorder-error"
+	| "starting";
+
 // ===== Callback Types =====
 
 export interface SessionRecorderCallbacks {
@@ -51,6 +56,12 @@ export class SessionRecorderMachine {
 	private enabled = false;
 	private videoReady = false;
 	private storageReady = false;
+	// Sticky: set by storageInitFailed(), cleared only by storageInitialized().
+	// NOT reset in enable() - unlike recorder failures, storage init happens
+	// exactly once (no retry path), so re-enabling can't fix it.
+	private storageFailed = false;
+	private consecutiveSaveFailures = 0;
+	private consecutiveRecorderFailures = 0;
 	private callbacks: SessionRecorderCallbacks;
 
 	constructor(callbacks: SessionRecorderCallbacks) {
@@ -67,6 +78,31 @@ export class SessionRecorderMachine {
 		return this.state.type === "recording";
 	}
 
+	getConsecutiveSaveFailures(): number {
+		return this.consecutiveSaveFailures;
+	}
+
+	/**
+	 * Why recording is not running, from the machine's own point of view.
+	 * null while recording, and null while intentionally disabled (pausing is
+	 * the caller's concept, not the machine's).
+	 */
+	getNotRecordingReason(): NotRecordingReason | null {
+		if (this.state.type === "recording") return null;
+		if (!this.enabled) return null;
+		if (this.consecutiveRecorderFailures >= 3) return "recorder-error";
+		// `storageFailed` (not merely `!storageReady`) distinguishes a genuine
+		// storageInitFailed() from the not-yet-initialized window after
+		// enable() - both leave storageReady false, but only the former means
+		// storage is broken rather than just not-yet-ready. It is sticky so
+		// later transitions (videoIsReady, disable/enable) can't launder a
+		// broken storage state into "starting".
+		if (this.storageFailed || this.consecutiveSaveFailures >= 2) {
+			return "storage-error";
+		}
+		return "starting";
+	}
+
 	// ===== Input Methods =====
 
 	/**
@@ -75,6 +111,8 @@ export class SessionRecorderMachine {
 	enable(): void {
 		if (this.enabled) return;
 		this.enabled = true;
+		this.consecutiveSaveFailures = 0;
+		this.consecutiveRecorderFailures = 0;
 		this.tryTransition();
 	}
 
@@ -98,6 +136,7 @@ export class SessionRecorderMachine {
 	 * Called when storage initialization completes.
 	 */
 	storageInitialized(): void {
+		this.storageFailed = false;
 		if (this.storageReady) return;
 		this.storageReady = true;
 		this.tryTransition();
@@ -108,6 +147,7 @@ export class SessionRecorderMachine {
 	 */
 	storageInitFailed(): void {
 		this.storageReady = false;
+		this.storageFailed = true;
 		this.setState({ type: "idle" });
 	}
 
@@ -136,24 +176,62 @@ export class SessionRecorderMachine {
 
 	/**
 	 * Called when the block rotation timer fires.
-	 * Completes current block and starts a new one if still enabled.
+	 * Completes the current block; the completing transition starts the next
+	 * one if still enabled and ready.
 	 */
 	async blockTimerFired(): Promise<void> {
 		if (this.state.type !== "recording") return;
-
 		await this.stopCurrentBlock();
+	}
 
-		// Start new block if still enabled and ready
-		if (this.enabled && this.videoReady && this.storageReady) {
-			this.startRecordingBlock();
+	/**
+	 * Called when the recorder died mid-block (the adapter already cleaned up
+	 * its refs/stream). Salvages what was captured, then restarts - unless
+	 * failures are repeating, in which case park visibly rather than hot-loop.
+	 */
+	async recorderFailed(
+		salvaged: { blob: Blob; duration: number } | null,
+	): Promise<void> {
+		if (this.state.type !== "recording") return;
+
+		const blockStart = this.state.blockStart;
+		this.setState({ type: "stopping" });
+
+		this.callbacks.onStopBlockTimer();
+		const thumbnails = this.callbacks.onStopThumbnails();
+		// No onStopRecording: the recorder is already dead.
+
+		if (salvaged && salvaged.blob.size > 0) {
+			const saved = await this.callbacks.onSaveBlock(
+				salvaged.blob,
+				salvaged.duration,
+				thumbnails,
+				blockStart,
+			);
+			this.consecutiveSaveFailures =
+				saved === null ? this.consecutiveSaveFailures + 1 : 0;
 		}
+
+		this.consecutiveRecorderFailures += 1;
+		if (this.consecutiveRecorderFailures >= 3) {
+			this.setState({ type: "idle" });
+			return;
+		}
+
+		this.tryTransition({ fromStop: true });
 	}
 
 	/**
 	 * Manually stop the current recording block.
 	 * Returns the saved session or null if not recording or save failed.
+	 *
+	 * disable: atomically stop AND disable - for callers about to leave live
+	 * mode, so the completing transition cannot restart recording before the
+	 * caller's disable() arrives.
 	 */
-	async stopCurrentBlock(): Promise<PracticeSession | null> {
+	async stopCurrentBlock(
+		options: { disable?: boolean } = {},
+	): Promise<PracticeSession | null> {
 		if (this.state.type !== "recording") return null;
 
 		const blockStart = this.state.blockStart;
@@ -173,14 +251,22 @@ export class SessionRecorderMachine {
 				thumbnails,
 				blockStart,
 			);
+			this.consecutiveSaveFailures =
+				savedSession === null ? this.consecutiveSaveFailures + 1 : 0;
 		}
 
-		// Transition to appropriate next state
-		if (this.enabled && this.videoReady && this.storageReady) {
-			this.setState({ type: "waitingForVideo" });
-		} else {
-			this.setState({ type: "idle" });
+		if (savedSession !== null) {
+			this.consecutiveRecorderFailures = 0;
 		}
+
+		if (options.disable) {
+			// Disable atomically before the completing transition so it lands
+			// idle with no window for a restart.
+			this.enabled = false;
+		}
+
+		// Never park: re-run the transition ladder now that the stop is done (H2).
+		this.tryTransition({ fromStop: true });
 
 		return savedSession;
 	}
@@ -194,8 +280,10 @@ export class SessionRecorderMachine {
 
 	/**
 	 * Attempt to transition based on current conditions.
+	 * `fromStop` marks the call that completes an in-flight stop — it alone
+	 * may leave the "stopping" state.
 	 */
-	private tryTransition(): void {
+	private tryTransition(options: { fromStop?: boolean } = {}): void {
 		// Not enabled? Stay idle
 		if (!this.enabled) {
 			if (this.state.type !== "idle") {
@@ -220,10 +308,10 @@ export class SessionRecorderMachine {
 			return;
 		}
 
-		// Everything ready and not already recording/stopping? Start!
+		// Everything ready and nothing in flight? Start!
 		if (
 			this.state.type !== "recording" &&
-			this.state.type !== "stopping"
+			(this.state.type !== "stopping" || options.fromStop)
 		) {
 			this.startRecordingBlock();
 		}

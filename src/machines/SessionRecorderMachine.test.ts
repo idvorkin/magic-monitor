@@ -181,14 +181,20 @@ describe("SessionRecorderMachine", () => {
 			expect(callbacks.onSaveBlock).not.toHaveBeenCalled();
 		});
 
-		it("transitions to waitingForVideo if still enabled and ready", async () => {
+		it("starts the next block immediately when still enabled and ready", async () => {
 			machine.enable();
 			machine.storageInitialized();
 			machine.videoIsReady();
 
 			await machine.stopCurrentBlock();
 
-			expect(machine.getState()).toEqual({ type: "waitingForVideo" });
+			// Contract change (H2 fix): a completed stop re-runs the transition
+			// ladder instead of parking in waitingForVideo forever.
+			expect(machine.getState()).toEqual({
+				type: "recording",
+				blockStart: 1000,
+			});
+			expect(callbacks.onStartRecording).toHaveBeenCalledTimes(2);
 		});
 
 		it("transitions to idle if disabled during stop", async () => {
@@ -205,6 +211,71 @@ describe("SessionRecorderMachine", () => {
 			await machine.stopCurrentBlock();
 
 			expect(callbacks.onStopRecording).not.toHaveBeenCalled();
+		});
+
+		it("recovers when disable() interleaves with an in-flight stop (pause/resume race)", async () => {
+			machine.enable();
+			machine.storageInitialized();
+			machine.videoIsReady();
+
+			// Hold the stop open so we can interleave inputs mid-flight
+			let resolveStop!: (v: { blob: Blob; duration: number }) => void;
+			callbacks.onStopRecording.mockReturnValueOnce(
+				new Promise((r) => {
+					resolveStop = r;
+				}),
+			);
+
+			const stopPromise = machine.stopCurrentBlock();
+			machine.disable(); // pause while stopping
+			machine.enable(); // resume while still stopping
+			resolveStop({
+				blob: new Blob(["x"], { type: "video/webm" }),
+				duration: 1000,
+			});
+			await stopPromise;
+
+			expect(machine.getState().type).toBe("recording");
+		});
+
+		it("returns to waitingForVideo (and later resumes) if video went away during stop", async () => {
+			machine.enable();
+			machine.storageInitialized();
+			machine.videoIsReady();
+
+			let resolveStop!: (v: { blob: Blob; duration: number }) => void;
+			callbacks.onStopRecording.mockReturnValueOnce(
+				new Promise((r) => {
+					resolveStop = r;
+				}),
+			);
+
+			const stopPromise = machine.stopCurrentBlock();
+			machine.videoNotReady();
+			resolveStop({
+				blob: new Blob(["x"], { type: "video/webm" }),
+				duration: 1000,
+			});
+			await stopPromise;
+
+			expect(machine.getState()).toEqual({ type: "waitingForVideo" });
+
+			machine.videoIsReady();
+			expect(machine.getState().type).toBe("recording");
+		});
+
+		it("stop with disable:true does not restart and lands idle atomically", async () => {
+			machine.enable();
+			machine.storageInitialized();
+			machine.videoIsReady();
+
+			await machine.stopCurrentBlock({ disable: true });
+
+			expect(machine.getState()).toEqual({ type: "idle" });
+			expect(callbacks.onStartRecording).toHaveBeenCalledTimes(1); // no restart
+
+			machine.enable(); // returning to live resumes
+			expect(machine.getState().type).toBe("recording");
 		});
 	});
 
@@ -282,11 +353,13 @@ describe("SessionRecorderMachine", () => {
 	});
 
 	describe("state transitions sequence", () => {
-		it("full lifecycle: enable -> init -> video -> record -> stop -> idle", async () => {
+		it("full lifecycle: enable -> init -> video -> record -> stop -> record -> disable -> idle", async () => {
 			const states: string[] = [];
-			callbacks.onStateChange.mockImplementation((state: SessionRecorderState) => {
-				states.push(state.type);
-			});
+			callbacks.onStateChange.mockImplementation(
+				(state: SessionRecorderState) => {
+					states.push(state.type);
+				},
+			);
 
 			machine.enable();
 			machine.storageInitialized();
@@ -299,7 +372,11 @@ describe("SessionRecorderMachine", () => {
 				"waitingForVideo",
 				"recording",
 				"stopping",
-				"waitingForVideo",
+				// Contract change (H2 fix): the manual stop above completes with
+				// everything still enabled/ready, so it re-runs the transition
+				// ladder and restarts recording immediately instead of parking.
+				"recording",
+				"stopping",
 				"idle",
 			]);
 		});
@@ -312,6 +389,118 @@ describe("SessionRecorderMachine", () => {
 			machine.enable();
 
 			expect(machine.getState()).toEqual({ type: "initializing" });
+		});
+	});
+
+	describe("save-failure resilience (M8)", () => {
+		it("keeps rotating blocks and counts consecutive save failures", async () => {
+			machine.enable();
+			machine.storageInitialized();
+			machine.videoIsReady();
+
+			callbacks.onSaveBlock.mockResolvedValueOnce(null); // save fails
+			await machine.stopCurrentBlock();
+
+			expect(machine.getConsecutiveSaveFailures()).toBe(1);
+			expect(machine.getState().type).toBe("recording"); // still rotating
+
+			callbacks.onSaveBlock.mockResolvedValueOnce({} as never); // save succeeds
+			await machine.stopCurrentBlock();
+			expect(machine.getConsecutiveSaveFailures()).toBe(0); // reset on success
+		});
+	});
+
+	describe("recorderFailed (M1)", () => {
+		function startRecordingMachine() {
+			machine.enable();
+			machine.storageInitialized();
+			machine.videoIsReady();
+		}
+
+		it("salvages what it can and restarts recording", async () => {
+			startRecordingMachine();
+
+			await machine.recorderFailed({
+				blob: new Blob(["salvaged"], { type: "video/webm" }),
+				duration: 1200,
+			});
+
+			expect(callbacks.onStopBlockTimer).toHaveBeenCalled();
+			expect(callbacks.onStopThumbnails).toHaveBeenCalled();
+			expect(callbacks.onStopRecording).not.toHaveBeenCalled(); // recorder already dead
+			expect(callbacks.onSaveBlock).toHaveBeenCalledTimes(1);
+			expect(machine.getState().type).toBe("recording"); // restarted
+		});
+
+		it("restarts without saving when nothing was salvaged", async () => {
+			startRecordingMachine();
+			await machine.recorderFailed(null);
+			expect(callbacks.onSaveBlock).not.toHaveBeenCalled();
+			expect(machine.getState().type).toBe("recording");
+		});
+
+		it("parks after 3 consecutive failures instead of hot-looping", async () => {
+			startRecordingMachine();
+			await machine.recorderFailed(null);
+			await machine.recorderFailed(null);
+			await machine.recorderFailed(null);
+			expect(machine.getState()).toEqual({ type: "idle" });
+
+			// User-driven resume retries fresh
+			machine.disable();
+			machine.enable();
+			expect(machine.getState().type).toBe("recording");
+		});
+
+		it("ignores failure reports when not recording", async () => {
+			await machine.recorderFailed(null);
+			expect(callbacks.onStopBlockTimer).not.toHaveBeenCalled();
+		});
+	});
+
+	describe("getNotRecordingReason", () => {
+		it("is null while recording and null while disabled", () => {
+			expect(machine.getNotRecordingReason()).toBeNull(); // disabled
+			machine.enable();
+			machine.storageInitialized();
+			machine.videoIsReady();
+			expect(machine.getNotRecordingReason()).toBeNull(); // recording
+		});
+
+		it("reports starting during benign transitions", () => {
+			machine.enable();
+			expect(machine.getNotRecordingReason()).toBe("starting");
+		});
+
+		it("reports storage-error on init failure and repeated save failures", async () => {
+			machine.enable();
+			machine.storageInitFailed();
+			expect(machine.getNotRecordingReason()).toBe("storage-error");
+		});
+
+		it("reports recorder-error after the 3-strike park", async () => {
+			machine.enable();
+			machine.storageInitialized();
+			machine.videoIsReady();
+			await machine.recorderFailed(null);
+			await machine.recorderFailed(null);
+			await machine.recorderFailed(null);
+			expect(machine.getNotRecordingReason()).toBe("recorder-error");
+		});
+
+		it("keeps storage-error sticky when video becomes ready later", () => {
+			machine.enable();
+			machine.storageInitFailed();
+			machine.videoIsReady(); // walks state idle -> initializing
+			expect(machine.getNotRecordingReason()).toBe("storage-error");
+		});
+
+		it("keeps storage-error sticky across disable/enable (pause/resume)", async () => {
+			machine.enable();
+			machine.storageInitFailed();
+			await machine.disable();
+			machine.enable();
+			expect(machine.getNotRecordingReason()).toBe("storage-error");
 		});
 	});
 });

@@ -544,6 +544,7 @@ test.describe("Magic Monitor E2E", () => {
 		// Recording indicator should show REC once video + storage are ready
 		const recordingIndicator = page.getByText("● REC");
 		await expect(recordingIndicator).toBeVisible({ timeout: 10000 });
+		await expect(page.getByText("NOT RECORDING")).toBeHidden();
 	});
 
 	test("Recording: Duration counter increases over time", async ({ page }) => {

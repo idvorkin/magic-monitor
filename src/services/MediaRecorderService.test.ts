@@ -9,7 +9,7 @@ class MockMediaRecorder {
 	state: RecordingState;
 	ondataavailable: ((e: { data: Blob }) => void) | null;
 	onstop: (() => void) | null;
-	onerror: (() => void) | null;
+	onerror: ((e?: Event) => void) | null;
 	stream: MediaStream;
 	options: MediaRecorderOptions;
 
@@ -20,6 +20,7 @@ class MockMediaRecorder {
 		this.ondataavailable = null;
 		this.onstop = null;
 		this.onerror = null;
+		registerRecorderInstance(this);
 	}
 
 	start() {
@@ -45,6 +46,14 @@ class MockMediaRecorder {
 	static isTypeSupported(mimeType: string): boolean {
 		return mimeType.includes("webm");
 	}
+}
+
+// Tracks the most recently constructed mock recorder so tests can fire its
+// event handlers directly (simulating mid-block death from outside the
+// service's closure).
+let recorderInstance: MockMediaRecorder | null = null;
+function registerRecorderInstance(instance: MockMediaRecorder): void {
+	recorderInstance = instance;
 }
 
 // Mock URL.createObjectURL and revokeObjectURL
@@ -111,6 +120,7 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	mockBlobUrls.clear();
 	blobUrlCounter = 0;
+	recorderInstance = null;
 });
 
 describe("MediaRecorderService", () => {
@@ -420,72 +430,38 @@ describe("MediaRecorderService", () => {
 			// @ts-expect-error - Restore MediaRecorder
 			globalThis.MediaRecorder = originalMockMediaRecorder;
 		});
-	});
 
-	describe("createPlaybackElement", () => {
-		it("should create muted video element", () => {
-			const video = MediaRecorderService.createPlaybackElement();
+		it("fires onFailure with best-effort salvage when the recorder errors mid-block", () => {
+			const mockStream = new MediaStream();
+			const onFailure = vi.fn();
+			const session = MediaRecorderService.startRecording(mockStream, {
+				onFailure,
+			});
+			session.start();
 
-			expect(video).toBeInstanceOf(HTMLVideoElement);
-			expect(video.muted).toBe(true);
-			expect(video.playsInline).toBe(true);
-		});
-	});
+			// Simulate mid-block death: fire the recorder's error handler directly
+			recorderInstance?.onerror?.(new Event("error"));
 
-	describe("loadBlob", () => {
-		it("should load blob into video element", () => {
-			const video = document.createElement("video");
-			const blob = new Blob(["test"], { type: "video/webm" });
-
-			const blobUrl = MediaRecorderService.loadBlob(video, blob);
-
-			expect(blobUrl).toMatch(/^blob:mock-/);
-			expect(video.src).toBe(blobUrl);
-			expect(URL.createObjectURL).toHaveBeenCalledWith(blob);
+			expect(onFailure).toHaveBeenCalledTimes(1);
+			expect(onFailure).toHaveBeenCalledWith(null); // no chunks yet -> nothing to salvage
 		});
 
-		it("should revoke previous blob URL before loading new one", () => {
-			const video = document.createElement("video");
-			const blob1 = new Blob(["test1"], { type: "video/webm" });
-			const blob2 = new Blob(["test2"], { type: "video/webm" });
+		it("does NOT fire onFailure for a requested stop", async () => {
+			const mockStream = new MediaStream();
+			const onFailure = vi.fn();
+			const session = MediaRecorderService.startRecording(mockStream, {
+				onFailure,
+			});
+			session.start();
+			if (recorderInstance) {
+				recorderInstance.state = "recording";
+			}
 
-			const url1 = MediaRecorderService.loadBlob(video, blob1);
-			expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+			const stopPromise = session.stop();
+			recorderInstance?.onstop?.(); // the stop() promise's own handler resolves it
+			await stopPromise;
 
-			MediaRecorderService.loadBlob(video, blob2);
-			expect(URL.revokeObjectURL).toHaveBeenCalledWith(url1);
-		});
-
-		it("should not revoke if previous src is not a blob URL", () => {
-			const video = document.createElement("video");
-			video.src = "https://example.com/video.mp4";
-
-			const blob = new Blob(["test"], { type: "video/webm" });
-			MediaRecorderService.loadBlob(video, blob);
-
-			// Should create new blob URL but not revoke the https URL
-			expect(URL.createObjectURL).toHaveBeenCalledWith(blob);
-			expect(URL.revokeObjectURL).not.toHaveBeenCalledWith(
-				"https://example.com/video.mp4",
-			);
-		});
-	});
-
-	describe("revokeObjectUrl", () => {
-		it("should revoke blob URL", () => {
-			const blobUrl = "blob:mock-123";
-
-			MediaRecorderService.revokeObjectUrl(blobUrl);
-
-			expect(URL.revokeObjectURL).toHaveBeenCalledWith(blobUrl);
-		});
-
-		it("should only revoke blob URLs", () => {
-			const httpUrl = "https://example.com/video.mp4";
-
-			MediaRecorderService.revokeObjectUrl(httpUrl);
-
-			expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+			expect(onFailure).not.toHaveBeenCalled();
 		});
 	});
 });

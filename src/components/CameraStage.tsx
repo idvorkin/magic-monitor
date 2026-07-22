@@ -235,7 +235,7 @@ export function CameraStage() {
 	const handleOpenPicker = useCallback(async () => {
 		// Stop any active recording so it appears in the session list
 		if (isRecording) {
-			await stopCurrentBlock();
+			await stopCurrentBlock({ disable: true });
 		}
 		setAppState("picker");
 	}, [isRecording, stopCurrentBlock]);
@@ -277,7 +277,7 @@ export function CameraStage() {
 
 	const handleStopAndViewRecording = useCallback(async () => {
 		// Stop current recording and immediately view it
-		const session = await stopCurrentBlock();
+		const session = await stopCurrentBlock({ disable: true });
 		if (session) {
 			await loadSession(session.id);
 			setAppState("replay");
@@ -493,6 +493,16 @@ export function CameraStage() {
 							<span className="text-yellow-400 mr-2">⏸ PAUSED</span>
 						) : sessionRecorder.isRecording ? (
 							<span className="text-red-400 mr-2">● REC</span>
+						) : sessionRecorder.notRecordingReason === "starting" ? (
+							<span className="text-gray-400 mr-2">◌ starting…</span>
+						) : sessionRecorder.notRecordingReason ? (
+							<span className="text-amber-400 font-bold text-sm mr-2">
+								⚠ NOT RECORDING (
+								{sessionRecorder.notRecordingReason === "storage-error"
+									? "storage failing"
+									: "recorder failing"}
+								)
+							</span>
 						) : null}
 						{Math.floor(sessionRecorder.currentBlockDuration)}s |{" "}
 						{sessionRecorder.recentSessions.length + sessionRecorder.savedSessions.length} sessions

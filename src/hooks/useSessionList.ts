@@ -20,6 +20,7 @@ export interface SessionListControls {
 	savedSessions: PracticeSession[];
 	error: string | null;
 	isInitialized: boolean;
+	initFailed: boolean;
 	saveBlock: (
 		blob: Blob,
 		duration: number,
@@ -41,6 +42,7 @@ export function useSessionList({
 	const [savedSessions, setSavedSessions] = useState<PracticeSession[]>([]);
 	const [error, setError] = useState<string | null>(null);
 	const [isInitialized, setIsInitialized] = useState(false);
+	const [initFailed, setInitFailed] = useState(false);
 
 	// Initialize storage and load sessions
 	useEffect(() => {
@@ -55,6 +57,7 @@ export function useSessionList({
 			} catch (err) {
 				console.error("Failed to initialize session storage:", err);
 				setError("Storage unavailable - recording disabled");
+				setInitFailed(true);
 			}
 		}
 		init();
@@ -140,6 +143,7 @@ export function useSessionList({
 		savedSessions,
 		error,
 		isInitialized,
+		initFailed,
 		saveBlock,
 		refreshSessions,
 	};

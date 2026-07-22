@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RecordingSession } from "../services/MediaRecorderService";
 import type { PracticeSession } from "../types/sessions";
@@ -8,6 +8,17 @@ import { useSessionRecorder } from "./useSessionRecorder";
 class MockMediaStream {}
 // @ts-expect-error - jsdom doesn't have MediaStream
 globalThis.MediaStream = MockMediaStream;
+
+// Mock ThumbnailCaptureService - jsdom has no real video decode/seek support,
+// so the real captureAtTime() would hang until its internal 10s timeout.
+vi.mock("../services/ThumbnailCaptureService", () => ({
+	ThumbnailCaptureService: {
+		captureFromVideo: vi.fn(),
+		captureAtTime: vi
+			.fn()
+			.mockResolvedValue("data:image/jpeg;base64,firstframe"),
+	},
+}));
 
 // Create mock services
 function createMockSessionStorage() {
@@ -49,9 +60,6 @@ function createMockMediaRecorder() {
 		isIOSSafari: vi.fn().mockReturnValue(false),
 		getBestCodec: vi.fn().mockReturnValue("video/webm"),
 		startRecording: vi.fn().mockReturnValue(mockSession),
-		createPlaybackElement: vi.fn().mockReturnValue(document.createElement("video")),
-		loadBlob: vi.fn().mockReturnValue("blob:test"),
-		revokeObjectUrl: vi.fn(),
 	};
 }
 
@@ -246,6 +254,74 @@ describe("useSessionRecorder", () => {
 			);
 
 			expect(typeof result.current.stopCurrentBlock).toBe("function");
+		});
+	});
+
+	describe("save-failure resilience (M8)", () => {
+		it("a failed block save does not permanently halt recording (M8)", async () => {
+			const storage = createMockSessionStorage();
+			storage.saveSessionWithBlob.mockRejectedValueOnce(new Error("disk full"));
+			const videoRef = createMockVideoRef(true);
+
+			const { result } = renderHook(() =>
+				useSessionRecorder({
+					videoRef,
+					enabled: true,
+					sessionStorageService: storage,
+					mediaRecorderService: mockRecorder,
+					videoFixService: mockVideoFix,
+					timerService: mockTimer,
+				}),
+			);
+
+			await waitFor(() => expect(result.current.isRecording).toBe(true));
+
+			await act(async () => {
+				await result.current.stopCurrentBlock();
+			});
+
+			// The block save failed (disk full), but that is not storage death:
+			// recording should keep rotating rather than permanently halting.
+			await waitFor(() => expect(result.current.isRecording).toBe(true));
+		});
+	});
+
+	describe("camera switch (H4)", () => {
+		it("stops and saves the current block when the video stream changes (H4)", async () => {
+			const videoRef = createMockVideoRef(true);
+
+			const { result } = renderHook(() =>
+				useSessionRecorder({
+					videoRef,
+					enabled: true,
+					sessionStorageService: mockStorage,
+					mediaRecorderService: mockRecorder,
+					videoFixService: mockVideoFix,
+					timerService: mockTimer,
+				}),
+			);
+
+			await waitFor(() => expect(result.current.isRecording).toBe(true));
+
+			// Camera switch: the video element now points at a different stream.
+			videoRef.current.srcObject = createMockStream();
+
+			act(() => {
+				mockTimer._triggerAllIntervals();
+			});
+
+			// The old block must be stopped and saved - the machine learns the
+			// video went away and releases the old clone's tracks.
+			await waitFor(() =>
+				expect(mockStorage.saveSessionWithBlob).toHaveBeenCalledTimes(1),
+			);
+
+			act(() => {
+				mockTimer._triggerAllIntervals();
+			});
+
+			// The next poll tick sees the new stream is ready and resumes.
+			await waitFor(() => expect(result.current.isRecording).toBe(true));
 		});
 	});
 

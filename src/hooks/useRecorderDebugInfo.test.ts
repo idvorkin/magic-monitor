@@ -31,9 +31,6 @@ describe("useRecorderDebugInfo", () => {
 		isIOSSafari: vi.fn(() => false),
 		getBestCodec: vi.fn(() => "video/webm;codecs=vp9"),
 		startRecording: vi.fn(),
-		createPlaybackElement: vi.fn(),
-		loadBlob: vi.fn(),
-		revokeObjectUrl: vi.fn(),
 	};
 
 	it("should return expected structure", () => {

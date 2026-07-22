@@ -10,6 +10,12 @@ export interface RecordingChunk {
 
 export interface MediaRecorderConfig {
 	videoBitsPerSecond?: number;
+	/**
+	 * Fires when the recorder dies mid-block (error event, or a stop that was
+	 * never requested). Salvage is best-effort and usually null - without a
+	 * timeslice no chunks exist until stop.
+	 */
+	onFailure?: (salvaged: RecordingChunk | null) => void;
 }
 
 export interface RecordingSession {
@@ -110,6 +116,23 @@ export const MediaRecorderService = {
 		const chunks: Blob[] = [];
 		const startTime = Date.now();
 
+		let stopRequested = false;
+
+		const salvage = (): RecordingChunk | null => {
+			if (chunks.length === 0) return null;
+			const blob = new Blob(chunks, { type: mimeType });
+			chunks.length = 0;
+			return { blob, duration: Date.now() - startTime };
+		};
+
+		const handleMidBlockDeath = () => {
+			if (stopRequested) return; // stop() owns the handlers from here on
+			recorder.ondataavailable = null;
+			recorder.onstop = null;
+			recorder.onerror = null;
+			config.onFailure?.(salvage());
+		};
+
 		return {
 			start: () => {
 				recorder.ondataavailable = (e) => {
@@ -117,6 +140,9 @@ export const MediaRecorderService = {
 						chunks.push(e.data);
 					}
 				};
+
+				recorder.onerror = handleMidBlockDeath;
+				recorder.onstop = handleMidBlockDeath;
 
 				try {
 					recorder.start();
@@ -130,6 +156,7 @@ export const MediaRecorderService = {
 				}
 			},
 			stop: (): Promise<RecordingChunk> => {
+				stopRequested = true;
 				return new Promise((resolve, reject) => {
 					recorder.onstop = () => {
 						const blob = new Blob(chunks, { type: mimeType });
@@ -159,40 +186,6 @@ export const MediaRecorderService = {
 			},
 			getState: () => recorder.state,
 		};
-	},
-
-	/**
-	 * Create a video element for playback.
-	 */
-	createPlaybackElement(): HTMLVideoElement {
-		const video = document.createElement("video");
-		video.muted = true;
-		video.playsInline = true;
-		return video;
-	},
-
-	/**
-	 * Load a blob into a video element and return the blob URL.
-	 * Automatically revokes previous blob URL if present.
-	 */
-	loadBlob(video: HTMLVideoElement, blob: Blob): string {
-		// Revoke previous blob URL if any
-		if (video.src?.startsWith("blob:")) {
-			URL.revokeObjectURL(video.src);
-		}
-		const blobUrl = URL.createObjectURL(blob);
-		video.src = blobUrl;
-		video.load();
-		return blobUrl;
-	},
-
-	/**
-	 * Revoke a blob URL to free memory.
-	 */
-	revokeObjectUrl(url: string): void {
-		if (url.startsWith("blob:")) {
-			URL.revokeObjectURL(url);
-		}
 	},
 };
 
