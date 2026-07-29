@@ -3,9 +3,9 @@
 default:
     @just --list
 
-# Run the development server
-dev:
-    npm run dev-called-from-just
+# Run the development server (accepts optional args like --port 5173)
+dev *ARGS:
+    npm run dev-called-from-just -- {{ARGS}}
 
 # Build the project (generates version info via npm script)
 build:

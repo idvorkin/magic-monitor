@@ -35,9 +35,10 @@ const tailscaleHosts = getTailscaleHostnames();
 const devHost = inContainer && tailscaleHosts.length > 0 ? "0.0.0.0" : "localhost";
 
 // Enable HTTPS for Tailscale (camera APIs require secure context)
-const useSsl = inContainer && tailscaleHosts.length > 0;
+// Also enable for E2E tests (Playwright needs HTTPS for getUserMedia mocking)
+const useSsl = (inContainer && tailscaleHosts.length > 0) || process.env.VITE_SSL === "true";
 
-if (useSsl) {
+if (useSsl && tailscaleHosts.length > 0) {
 	console.log(`\n🔗 Tailscale detected in container`);
 	console.log(`   Access via: https://${tailscaleHosts[1]}:5173\n`);
 }

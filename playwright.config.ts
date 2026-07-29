@@ -41,5 +41,8 @@ export default defineConfig({
 		stdout: "ignore",
 		stderr: "pipe",
 		ignoreHTTPSErrors: true,
+		env: {
+			VITE_SSL: "true",
+		},
 	},
 });
