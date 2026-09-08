@@ -21,15 +21,25 @@ import { anyHandIsVSign, type HandLandmark } from "../utils/handPose";
  * COOLDOWN_MS: after a round ends, the gesture is deaf this long. Without it,
  * a hand still sitting in a V when the card comes down instantly starts
  * another round. 2s is about how long it takes to lower a hand.
+ *
+ * GRACE_MS: how long the V may disappear without restarting the hold. The
+ * classifier runs per frame and is not perfect — MediaPipe drops a blurred
+ * hand for a frame, and a finger crossing the extension dead band reads as
+ * neither extended nor curled. Without this, one bad frame in twenty resets
+ * the 600ms clock and a genuinely held V never fires. 150ms is ~4 frames at
+ * 30fps: long enough to bridge a dropout, far shorter than the time it takes
+ * to actually lower a hand.
  */
 export const V_GESTURE_CONFIG = {
 	HOLD_MS: 600,
 	COOLDOWN_MS: 2000,
+	GRACE_MS: 150,
 } as const;
 
 interface UseThinkOfACardOptions {
 	/**
-	 * Live MediaPipe hand landmarks, written at frame rate by useSmartZoom.
+	 * Live MediaPipe hand landmarks, written at frame rate by useHandLandmarks
+	 * (directly, or through useSmartZoom when auto-framing is on).
 	 * Omit (or leave empty) and only the key/button triggers work.
 	 */
 	landmarksRef?: React.RefObject<HandLandmark[][]>;
@@ -58,6 +68,7 @@ export function useThinkOfACard(options: UseThinkOfACardOptions = {}) {
 	gestureHoldRef.current ??= new GestureHold({
 		holdMs: V_GESTURE_CONFIG.HOLD_MS,
 		cooldownMs: V_GESTURE_CONFIG.COOLDOWN_MS,
+		graceMs: V_GESTURE_CONFIG.GRACE_MS,
 	});
 
 	const machineRef = useRef<ThinkOfACardMachine | null>(null);

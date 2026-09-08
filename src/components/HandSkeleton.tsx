@@ -46,7 +46,7 @@ interface HandSkeletonProps {
  * Uses refs and rAF for 60fps rendering without React re-renders.
  *
  * Architecture: This component never triggers React re-renders during animation.
- * It reads landmarks from a ref (written by useSmartZoom) and draws directly to canvas.
+ * It reads landmarks from a ref (written by useHandLandmarks) and draws directly to canvas.
  */
 export function HandSkeleton({ landmarksRef, videoRef, isMirror = false }: HandSkeletonProps) {
 	const canvasRef = useRef<HTMLCanvasElement>(null);

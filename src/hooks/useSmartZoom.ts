@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PAN_CONSTANTS, ZOOM_CONSTANTS } from "../constants/zoom";
-import { HandLandmarkerService } from "../services/HandLandmarkerService";
 import {
 	clampSpeed,
 	createSmoother,
@@ -8,7 +7,8 @@ import {
 	type Smoother,
 	type SmoothingPreset,
 } from "../smoothing";
-import { useModelLoadingState } from "./useModelLoadingState";
+import type { HandLandmark } from "../utils/handPose";
+import { useHandLandmarks } from "./useHandLandmarks";
 
 // Clamped edges indicator for debug overlay (see docs/SMART_ZOOM_SPEC.md)
 export interface ClampedEdges {
@@ -16,13 +16,6 @@ export interface ClampedEdges {
 	right: boolean;
 	top: boolean;
 	bottom: boolean;
-}
-
-// Hand landmark point from MediaPipe
-interface HandLandmark {
-	x: number;
-	y: number;
-	z: number;
 }
 
 // Debug trace entry for diagnostics
@@ -107,22 +100,6 @@ export function clampPanToViewport(
 	return { pan: clampedPan, clampedEdges };
 }
 
-/**
- * Compute processing canvas dimensions that preserve the source aspect ratio.
- * Scales so the larger dimension fits within maxDimension; never upscales.
- */
-export function computeProcessingDimensions(
-	videoWidth: number,
-	videoHeight: number,
-	maxDimension = 640,
-): { width: number; height: number } {
-	const scale = Math.min(1, maxDimension / Math.max(videoWidth, videoHeight));
-	return {
-		width: Math.round(videoWidth * scale),
-		height: Math.round(videoHeight * scale),
-	};
-}
-
 interface SmartZoomConfig {
 	videoRef: React.RefObject<HTMLVideoElement | null>;
 	enabled: boolean;
@@ -136,12 +113,6 @@ export function useSmartZoom({
 	padding = 2.0,
 	smoothingPreset = "ema",
 }: SmartZoomConfig) {
-	const { isModelLoading, loadingProgress, loadingPhase, modelError } =
-		useModelLoadingState(HandLandmarkerService, { initialIsLoading: true });
-	// Use ref instead of state for landmarks to avoid 60fps re-renders
-	// HandSkeleton reads from this ref directly in its own rAF loop
-	const debugLandmarksRef = useRef<HandLandmark[][]>([]);
-
 	// Smoother instance (recreated when preset changes)
 	const smootherRef = useRef<Smoother>(createSmoother(smoothingPreset));
 
@@ -184,23 +155,6 @@ export function useSmartZoom({
 	// The refs above always have the real-time value; state is for UI display only
 	const UI_UPDATE_INTERVAL = 6;
 
-	// Perf timing for detection (exposed via ref for overlay)
-	const detectTimeMsRef = useRef(0);
-
-	// Offscreen canvas for downscaling video before detection
-	// MediaPipe's hand model works at 224x224 internally, so 640-wide is more than enough
-	const processingCanvasRef = useRef<
-		OffscreenCanvas | HTMLCanvasElement | null
-	>(null);
-	const processingCtxRef = useRef<
-		CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null
-	>(null);
-	const lastVideoDimsRef = useRef({ width: 0, height: 0 });
-	const processingResRef = useRef({ width: 0, height: 0 });
-
-	const requestRef = useRef<number>(0);
-	const lastVideoTimeRef = useRef<number>(-1);
-
 	// Debug trace buffer (circular)
 	const debugTraceRef = useRef<DebugTraceEntry[]>([]);
 	const frameCountRef = useRef(0);
@@ -212,284 +166,229 @@ export function useSmartZoom({
 		}
 	}, [enabled]);
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: isModelLoading triggers effect re-run when model loads
-	useEffect(() => {
-		const landmarker = HandLandmarkerService.getModel();
-		if (!enabled || !landmarker || !videoRef.current) return;
+	/**
+	 * Turns one frame's hands into a zoom and pan. Called by useHandLandmarks
+	 * once per newly decoded frame — same cadence the detection loop used to
+	 * run at when it lived inside this hook.
+	 */
+	const handleDetect = useCallback(
+		(landmarks: HandLandmark[][], video: HTMLVideoElement) => {
+			if (landmarks.length > 0) {
+				// Calculate bounding box of all hands
+				let minX = 1,
+					minY = 1,
+					maxX = 0,
+					maxY = 0;
 
-		const detect = () => {
-			const video = videoRef.current;
-			if (
-				!video ||
-				video.paused ||
-				video.ended ||
-				video.readyState < 2 ||
-				video.videoWidth === 0
-			) {
-				requestRef.current = requestAnimationFrame(detect);
-				return;
-			}
+				landmarks.forEach((hand) => {
+					hand.forEach((point) => {
+						if (point.x < minX) minX = point.x;
+						if (point.x > maxX) maxX = point.x;
+						if (point.y < minY) minY = point.y;
+						if (point.y > maxY) maxY = point.y;
+					});
+				});
 
-			// Only process if video time has changed
-			if (video.currentTime !== lastVideoTimeRef.current) {
-				lastVideoTimeRef.current = video.currentTime;
+				// Calculate center and size
+				const centerX = (minX + maxX) / 2;
+				const centerY = (minY + maxY) / 2;
+				const width = maxX - minX;
+				const height = maxY - minY;
 
-				// Create or resize processing canvas to match video aspect ratio
-				const vw = video.videoWidth;
-				const vh = video.videoHeight;
-				if (
-					!processingCanvasRef.current ||
-					lastVideoDimsRef.current.width !== vw ||
-					lastVideoDimsRef.current.height !== vh
-				) {
-					const dims = computeProcessingDimensions(vw, vh);
-					if (!processingCanvasRef.current) {
-						processingCanvasRef.current = document.createElement("canvas");
-					}
-					processingCanvasRef.current.width = dims.width;
-					processingCanvasRef.current.height = dims.height;
-					processingCtxRef.current = (
-						processingCanvasRef.current as HTMLCanvasElement
-					).getContext("2d");
-					lastVideoDimsRef.current = { width: vw, height: vh };
-					processingResRef.current = dims;
-				}
+				// Determine target zoom based on bounding box size
+				// We want the box to fill (1 / padding) of the screen
+				// e.g. if padding is 2.0, box should be half the screen
+				const maxDim = Math.max(width, height);
+				let targetZoom = 1 / (maxDim * padding);
 
-				// Downscale video preserving aspect ratio before detection.
-				// Falls back to raw video if drawImage fails (e.g. in jsdom tests).
-				let detectInput: HTMLVideoElement | HTMLCanvasElement = video;
-				const processingCtx = processingCtxRef.current;
-				const procRes = processingResRef.current;
-				if (processingCtx) {
-					try {
-						processingCtx.drawImage(video, 0, 0, procRes.width, procRes.height);
-						detectInput = processingCanvasRef.current as HTMLCanvasElement;
-					} catch {
-						// jsdom canvas doesn't support drawImage with video — use raw video
-					}
-				}
-
-				const startTimeMs = performance.now();
-				const t0 = performance.now();
-				const result = landmarker.detectForVideo(
-					detectInput as unknown as HTMLVideoElement,
-					startTimeMs,
+				// Clamp zoom (see docs/SMART_ZOOM_SPEC.md)
+				targetZoom = Math.min(
+					Math.max(targetZoom, ZOOM_CONSTANTS.MIN_ZOOM),
+					ZOOM_CONSTANTS.MAX_ZOOM,
 				);
-				detectTimeMsRef.current = performance.now() - t0;
 
-				if (result?.landmarks && result.landmarks.length > 0) {
-					// Calculate bounding box of all hands
-					let minX = 1,
-						minY = 1,
-						maxX = 0,
-						maxY = 0;
+				// Determine target pan in NORMALIZED coordinates (0-1 range)
+				// Pan of 0 = centered, positive = shift view left/up
+				// If center is 0.5, pan is 0.
+				// If center is 0.8 (right side), pan is -0.3 (shift view right to center hand)
+				const targetPanX = 0.5 - centerX;
+				const targetPanY = 0.5 - centerY;
 
-					result.landmarks.forEach((hand) => {
-						hand.forEach((point) => {
-							if (point.x < minX) minX = point.x;
-							if (point.x > maxX) maxX = point.x;
-							if (point.y < minY) minY = point.y;
-							if (point.y > maxY) maxY = point.y;
-						});
-					});
+				// Hysteresis / Deadband Check (all in normalized coordinates)
+				const zoomDelta = Math.abs(
+					targetZoom - committedTargetRef.current.zoom,
+				);
+				const panDist = Math.sqrt(
+					(targetPanX - committedTargetRef.current.pan.x) ** 2 +
+						(targetPanY - committedTargetRef.current.pan.y) ** 2,
+				);
+				// panDist is now in normalized units (0-1), threshold is also normalized
 
-					// Calculate center and size
-					const centerX = (minX + maxX) / 2;
-					const centerY = (minY + maxY) / 2;
-					const width = maxX - minX;
-					const height = maxY - minY;
-
-					// Determine target zoom based on bounding box size
-					// We want the box to fill (1 / padding) of the screen
-					// e.g. if padding is 2.0, box should be half the screen
-					const maxDim = Math.max(width, height);
-					let targetZoom = 1 / (maxDim * padding);
-
-					// Clamp zoom (see docs/SMART_ZOOM_SPEC.md)
-					targetZoom = Math.min(
-						Math.max(targetZoom, ZOOM_CONSTANTS.MIN_ZOOM),
-						ZOOM_CONSTANTS.MAX_ZOOM,
-					);
-
-					// Determine target pan in NORMALIZED coordinates (0-1 range)
-					// Pan of 0 = centered, positive = shift view left/up
-					// If center is 0.5, pan is 0.
-					// If center is 0.8 (right side), pan is -0.3 (shift view right to center hand)
-					const targetPanX = 0.5 - centerX;
-					const targetPanY = 0.5 - centerY;
-
-					// Hysteresis / Deadband Check (all in normalized coordinates)
-					const zoomDelta = Math.abs(
-						targetZoom - committedTargetRef.current.zoom,
-					);
-					const panDist = Math.sqrt(
-						(targetPanX - committedTargetRef.current.pan.x) ** 2 +
-							(targetPanY - committedTargetRef.current.pan.y) ** 2,
-					);
-					// panDist is now in normalized units (0-1), threshold is also normalized
-
-					// Only update committed target if change is significant
-					if (
-						zoomDelta > ZOOM_CONSTANTS.THRESHOLD ||
-						panDist > PAN_CONSTANTS.THRESHOLD
-					) {
-						committedTargetRef.current = {
-							zoom: targetZoom,
-							pan: { x: targetPanX, y: targetPanY },
-						};
-					}
-
-					// Smooth using the selected smoother (EMA or Kalman)
-					const smoothed = smootherRef.current.update({
-						x: committedTargetRef.current.pan.x,
-						y: committedTargetRef.current.pan.y,
-						zoom: committedTargetRef.current.zoom,
-					});
-
-					// Apply speed clamping to prevent jarring movements
-					const speedClamped = clampSpeed(
-						prevPositionRef.current,
-						smoothed,
-						DEFAULT_SPEED_CLAMP.maxPanSpeed,
-						DEFAULT_SPEED_CLAMP.maxZoomSpeed,
-					);
-
-					// Clamp pan to viewport bounds (using normalized coordinates)
-					const { pan: clampedPan, clampedEdges: edges } = clampNormalizedPan(
-						{ x: speedClamped.x, y: speedClamped.y },
-						speedClamped.zoom,
-					);
-
-					// Update refs for next frame
-					prevPositionRef.current = {
-						x: clampedPan.x,
-						y: clampedPan.y,
-						zoom: speedClamped.zoom,
+				// Only update committed target if change is significant
+				if (
+					zoomDelta > ZOOM_CONSTANTS.THRESHOLD ||
+					panDist > PAN_CONSTANTS.THRESHOLD
+				) {
+					committedTargetRef.current = {
+						zoom: targetZoom,
+						pan: { x: targetPanX, y: targetPanY },
 					};
+				}
 
-					// Record debug trace entry (pan values are now normalized)
-					frameCountRef.current++;
-					const traceEntry: DebugTraceEntry = {
-						timestamp: performance.now(),
-						frame: frameCountRef.current,
-						handsDetected: result.landmarks.length,
-						boundingBox: { minX, maxX, minY, maxY },
-						targetZoom,
-						targetPan: { x: targetPanX, y: targetPanY },
-						committedZoom: committedTargetRef.current.zoom,
-						committedPan: { ...committedTargetRef.current.pan },
-						currentZoom: prevPositionRef.current.zoom,
-						currentPan: {
-							x: prevPositionRef.current.x,
-							y: prevPositionRef.current.y,
-						},
-						clampedEdges: edges,
-						videoSize: { width: video.videoWidth, height: video.videoHeight },
-					};
-					debugTraceRef.current.push(traceEntry);
-					if (debugTraceRef.current.length > DEBUG_TRACE_MAX_ENTRIES) {
-						debugTraceRef.current.shift();
-					}
+				// Smooth using the selected smoother (EMA or Kalman)
+				const smoothed = smootherRef.current.update({
+					x: committedTargetRef.current.pan.x,
+					y: committedTargetRef.current.pan.y,
+					zoom: committedTargetRef.current.zoom,
+				});
 
-					// Always update refs (real-time values for transforms)
-					zoomRef.current = prevPositionRef.current.zoom;
-					panRef.current = {
+				// Apply speed clamping to prevent jarring movements
+				const speedClamped = clampSpeed(
+					prevPositionRef.current,
+					smoothed,
+					DEFAULT_SPEED_CLAMP.maxPanSpeed,
+					DEFAULT_SPEED_CLAMP.maxZoomSpeed,
+				);
+
+				// Clamp pan to viewport bounds (using normalized coordinates)
+				const { pan: clampedPan, clampedEdges: edges } = clampNormalizedPan(
+					{ x: speedClamped.x, y: speedClamped.y },
+					speedClamped.zoom,
+				);
+
+				// Update refs for next frame
+				prevPositionRef.current = {
+					x: clampedPan.x,
+					y: clampedPan.y,
+					zoom: speedClamped.zoom,
+				};
+
+				// Record debug trace entry (pan values are now normalized)
+				frameCountRef.current++;
+				const traceEntry: DebugTraceEntry = {
+					timestamp: performance.now(),
+					frame: frameCountRef.current,
+					handsDetected: landmarks.length,
+					boundingBox: { minX, maxX, minY, maxY },
+					targetZoom,
+					targetPan: { x: targetPanX, y: targetPanY },
+					committedZoom: committedTargetRef.current.zoom,
+					committedPan: { ...committedTargetRef.current.pan },
+					currentZoom: prevPositionRef.current.zoom,
+					currentPan: {
 						x: prevPositionRef.current.x,
 						y: prevPositionRef.current.y,
-					};
-					clampedEdgesRef.current = edges;
-					debugLandmarksRef.current = result.landmarks;
+					},
+					clampedEdges: edges,
+					videoSize: { width: video.videoWidth, height: video.videoHeight },
+				};
+				debugTraceRef.current.push(traceEntry);
+				if (debugTraceRef.current.length > DEBUG_TRACE_MAX_ENTRIES) {
+					debugTraceRef.current.shift();
+				}
 
-					// Throttle React state updates to ~10Hz to avoid render storms
-					if (frameCountRef.current % UI_UPDATE_INTERVAL === 0) {
-						setZoom(zoomRef.current);
-						setPan(panRef.current);
-						setClampedEdges(clampedEdgesRef.current);
-					}
-				} else {
-					// No hands? Slowly zoom out to 1
-					// For zoom out, we can bypass hysteresis or set target to 1
-					committedTargetRef.current = { zoom: 1, pan: { x: 0, y: 0 } };
+				// Always update refs (real-time values for transforms)
+				zoomRef.current = prevPositionRef.current.zoom;
+				panRef.current = {
+					x: prevPositionRef.current.x,
+					y: prevPositionRef.current.y,
+				};
+				clampedEdgesRef.current = edges;
 
-					// Smooth using the selected smoother (target is default position)
-					const smoothed = smootherRef.current.update({
-						x: 0,
-						y: 0,
-						zoom: 1,
-					});
+				// Throttle React state updates to ~10Hz to avoid render storms
+				if (frameCountRef.current % UI_UPDATE_INTERVAL === 0) {
+					setZoom(zoomRef.current);
+					setPan(panRef.current);
+					setClampedEdges(clampedEdgesRef.current);
+				}
+			} else {
+				// No hands? Slowly zoom out to 1
+				// For zoom out, we can bypass hysteresis or set target to 1
+				committedTargetRef.current = { zoom: 1, pan: { x: 0, y: 0 } };
 
-					// Apply speed clamping (use slower speed when no hands for gentler return)
-					const speedClamped = clampSpeed(
-						prevPositionRef.current,
-						smoothed,
-						DEFAULT_SPEED_CLAMP.maxPanSpeed * 0.5, // Half speed when no hands
-						DEFAULT_SPEED_CLAMP.maxZoomSpeed * 0.5,
-					);
+				// Smooth using the selected smoother (target is default position)
+				const smoothed = smootherRef.current.update({
+					x: 0,
+					y: 0,
+					zoom: 1,
+				});
 
-					// Clamp pan to viewport bounds (using normalized coordinates)
-					const { pan: clampedPan, clampedEdges: edges } = clampNormalizedPan(
-						{ x: speedClamped.x, y: speedClamped.y },
-						speedClamped.zoom,
-					);
+				// Apply speed clamping (use slower speed when no hands for gentler return)
+				const speedClamped = clampSpeed(
+					prevPositionRef.current,
+					smoothed,
+					DEFAULT_SPEED_CLAMP.maxPanSpeed * 0.5, // Half speed when no hands
+					DEFAULT_SPEED_CLAMP.maxZoomSpeed * 0.5,
+				);
 
-					// Update refs for next frame
-					prevPositionRef.current = {
-						x: clampedPan.x,
-						y: clampedPan.y,
-						zoom: speedClamped.zoom,
-					};
+				// Clamp pan to viewport bounds (using normalized coordinates)
+				const { pan: clampedPan, clampedEdges: edges } = clampNormalizedPan(
+					{ x: speedClamped.x, y: speedClamped.y },
+					speedClamped.zoom,
+				);
 
-					// Record debug trace entry (no hands, pan values are normalized)
-					frameCountRef.current++;
-					const traceEntry: DebugTraceEntry = {
-						timestamp: performance.now(),
-						frame: frameCountRef.current,
-						handsDetected: 0,
-						boundingBox: null,
-						targetZoom: 1,
-						targetPan: { x: 0, y: 0 },
-						committedZoom: 1,
-						committedPan: { x: 0, y: 0 },
-						currentZoom: prevPositionRef.current.zoom,
-						currentPan: {
-							x: prevPositionRef.current.x,
-							y: prevPositionRef.current.y,
-						},
-						clampedEdges: edges,
-						videoSize: { width: video.videoWidth, height: video.videoHeight },
-					};
-					debugTraceRef.current.push(traceEntry);
-					if (debugTraceRef.current.length > DEBUG_TRACE_MAX_ENTRIES) {
-						debugTraceRef.current.shift();
-					}
+				// Update refs for next frame
+				prevPositionRef.current = {
+					x: clampedPan.x,
+					y: clampedPan.y,
+					zoom: speedClamped.zoom,
+				};
 
-					// Always update refs (real-time values for transforms)
-					zoomRef.current = prevPositionRef.current.zoom;
-					panRef.current = {
+				// Record debug trace entry (no hands, pan values are normalized)
+				frameCountRef.current++;
+				const traceEntry: DebugTraceEntry = {
+					timestamp: performance.now(),
+					frame: frameCountRef.current,
+					handsDetected: 0,
+					boundingBox: null,
+					targetZoom: 1,
+					targetPan: { x: 0, y: 0 },
+					committedZoom: 1,
+					committedPan: { x: 0, y: 0 },
+					currentZoom: prevPositionRef.current.zoom,
+					currentPan: {
 						x: prevPositionRef.current.x,
 						y: prevPositionRef.current.y,
-					};
-					clampedEdgesRef.current = edges;
-					debugLandmarksRef.current = [];
+					},
+					clampedEdges: edges,
+					videoSize: { width: video.videoWidth, height: video.videoHeight },
+				};
+				debugTraceRef.current.push(traceEntry);
+				if (debugTraceRef.current.length > DEBUG_TRACE_MAX_ENTRIES) {
+					debugTraceRef.current.shift();
+				}
 
-					// Throttle React state updates to ~10Hz to avoid render storms
-					if (frameCountRef.current % UI_UPDATE_INTERVAL === 0) {
-						setZoom(zoomRef.current);
-						setPan(panRef.current);
-						setClampedEdges(clampedEdgesRef.current);
-					}
+				// Always update refs (real-time values for transforms)
+				zoomRef.current = prevPositionRef.current.zoom;
+				panRef.current = {
+					x: prevPositionRef.current.x,
+					y: prevPositionRef.current.y,
+				};
+				clampedEdgesRef.current = edges;
+
+				// Throttle React state updates to ~10Hz to avoid render storms
+				if (frameCountRef.current % UI_UPDATE_INTERVAL === 0) {
+					setZoom(zoomRef.current);
+					setPan(panRef.current);
+					setClampedEdges(clampedEdgesRef.current);
 				}
 			}
+		},
+		[padding],
+	);
 
-			requestRef.current = requestAnimationFrame(detect);
-		};
-
-		detect();
-
-		return () => {
-			if (requestRef.current) cancelAnimationFrame(requestRef.current);
-		};
-	}, [enabled, videoRef, padding, smoothingPreset, isModelLoading]);
+	// The landmark producer. Smart zoom is only one of its consumers: the
+	// V-sign trigger reads the same landmarks, and runs its own bare instance
+	// of this hook when smart zoom is off.
+	const {
+		isModelLoading,
+		loadingProgress,
+		loadingPhase,
+		modelError,
+		landmarksRef: debugLandmarksRef,
+		detectTimeMsRef,
+		processingResRef,
+	} = useHandLandmarks({ videoRef, enabled, onDetect: handleDetect });
 
 	// Get debug trace as JSON for download
 	const getDebugTrace = useCallback(() => {

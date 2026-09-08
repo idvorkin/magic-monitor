@@ -6,6 +6,7 @@ import { useCamera } from "../hooks/useCamera";
 import { useCardDetection } from "../hooks/useCardDetection";
 import { useEscapeKey } from "../hooks/useEscapeKey";
 import { useFlashDetector } from "../hooks/useFlashDetector";
+import { useHandLandmarks } from "../hooks/useHandLandmarks";
 import { useMobileDetection } from "../hooks/useMobileDetection";
 import { useRecorderDebugInfo } from "../hooks/useRecorderDebugInfo";
 import { useReplayPlayer } from "../hooks/useReplayPlayer";
@@ -146,12 +147,31 @@ export function CameraStage() {
 		confidenceThreshold: cardConfidenceThreshold,
 	});
 
+	// Hand landmarks when smart zoom is off. The V-sign trigger reads landmarks,
+	// and smart zoom used to be the only thing producing them — so the gesture
+	// died whenever Igor turned the auto-framing off. This runs the same
+	// detection loop with no zoom or pan attached. `enabled` is the exact
+	// complement of smart zoom's, so MediaPipe never runs twice.
+	const gestureLandmarks = useHandLandmarks({
+		videoRef,
+		enabled: !isSmartZoom && appState === "live",
+	});
+	const handLandmarksRef = isSmartZoom
+		? smartZoom.debugLandmarksRef
+		: gestureLandmarks.landmarksRef;
+	const handDetectTimeMsRef = isSmartZoom
+		? smartZoom.detectTimeMsRef
+		: gestureLandmarks.detectTimeMsRef;
+	const handProcessingResRef = isSmartZoom
+		? smartZoom.processingResRef
+		: gestureLandmarks.processingResRef;
+
 	// Think of a Card: countdown then a random card, standing in for a spectator
-	// naming one. The V-sign trigger rides on the hand landmarks smart zoom is
-	// already computing, so it needs smart zoom on; P and the button always work.
+	// naming one. The V sign works whether or not smart zoom is on; P and the
+	// button always work.
 	const thinkOfACard = useThinkOfACard({
-		landmarksRef: smartZoom.debugLandmarksRef,
-		gestureEnabled: isSmartZoom && appState === "live",
+		landmarksRef: handLandmarksRef,
+		gestureEnabled: appState === "live",
 	});
 	const { toggle: toggleThinkOfACard, dismiss: dismissThinkOfACard } =
 		thinkOfACard;
@@ -529,7 +549,7 @@ export function CameraStage() {
 			<div className="absolute bottom-8 right-8 z-40 text-white/50 font-mono text-xs pointer-events-none flex flex-col items-end gap-1">
 				{appState === "live" && (
 					<span className="text-white/40" title="Think of a card">
-						{isSmartZoom ? "✌ or P" : "P"}
+						✌ or P
 					</span>
 				)}
 				{smartZoom.isModelLoading && (
@@ -598,17 +618,17 @@ export function CameraStage() {
 			/>
 
 			{/* Hand Skeleton Debug Overlay */}
-			{showHandSkeleton && isSmartZoom && appState === "live" && (
+			{showHandSkeleton && appState === "live" && (
 				<>
 					<HandSkeleton
-						landmarksRef={smartZoom.debugLandmarksRef}
+						landmarksRef={handLandmarksRef}
 						videoRef={videoRef}
 						isMirror={isMirror}
 					/>
 					<DetectPerfOverlay
-						detectTimeMsRef={smartZoom.detectTimeMsRef}
+						detectTimeMsRef={handDetectTimeMsRef}
 						videoRef={videoRef}
-						processingResRef={smartZoom.processingResRef}
+						processingResRef={handProcessingResRef}
 					/>
 				</>
 			)}
