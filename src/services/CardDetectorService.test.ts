@@ -307,6 +307,8 @@ describe("CardDetectorService input buffer reuse", () => {
 		expect(tensorBuffers()[2]).toBe(firstBuffer);
 	});
 
+	// Two full load+detect cycles; single-test isolation takes ~4.5 s so the
+	// default 5 s was too tight when the suite ran in parallel on CI.
 	it("drops the shared buffer on reset", async () => {
 		await CardDetectorService.detect(solidSource("rgb(255, 0, 0)"));
 		const before = tensorBuffers()[0];
@@ -317,7 +319,7 @@ describe("CardDetectorService input buffer reuse", () => {
 		await CardDetectorService.detect(solidSource("rgb(255, 0, 0)"));
 
 		expect(tensorBuffers()[1]).not.toBe(before);
-	});
+	}, 15000);
 });
 
 describe("nms", () => {
