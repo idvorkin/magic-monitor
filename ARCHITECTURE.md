@@ -70,7 +70,8 @@ src/
 │   ├── TimerService.ts
 │   └── VideoFixService.ts
 ├── machines/            # State machines
-│   └── SessionRecorderMachine.ts
+│   ├── SessionRecorderMachine.ts
+│   └── ...
 ├── smoothing/           # Smoothing algorithms
 │   ├── ema.ts
 │   ├── kalman.ts
@@ -85,7 +86,8 @@ src/
 │   ├── bugReportFormatters.ts
 │   ├── formatters.ts
 │   ├── shakeDetection.ts
-│   └── thumbnailSelection.ts
+│   ├── thumbnailSelection.ts
+│   └── ...
 └── App.tsx
 ```
 
