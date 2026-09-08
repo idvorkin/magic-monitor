@@ -50,7 +50,6 @@ describe("useMobileDetection", () => {
 		const { result } = renderHook(() => useMobileDetection(service));
 
 		expect(result.current.isMobile).toBe(true);
-		expect(result.current.isLowMemory).toBe(true); // Falls back to mobile when no deviceMemory
 	});
 
 	it("detects touch device with medium screen as mobile", () => {
@@ -62,58 +61,6 @@ describe("useMobileDetection", () => {
 		const { result } = renderHook(() => useMobileDetection(service));
 
 		expect(result.current.isMobile).toBe(true);
-	});
-
-	it("detects low memory when deviceMemory API reports < 4GB", () => {
-		const service = createMockService({
-			getScreenWidth: () => 1920,
-			getDeviceMemoryGB: () => 2,
-		});
-
-		const { result } = renderHook(() => useMobileDetection(service));
-
-		expect(result.current.isMobile).toBe(false);
-		expect(result.current.isLowMemory).toBe(true);
-		expect(result.current.deviceMemoryGB).toBe(2);
-	});
-
-	it("detects high memory desktop as non-low-memory", () => {
-		const service = createMockService({
-			getScreenWidth: () => 1920,
-			getDeviceMemoryGB: () => 8,
-		});
-
-		const { result } = renderHook(() => useMobileDetection(service));
-
-		expect(result.current.isMobile).toBe(false);
-		expect(result.current.isLowMemory).toBe(false);
-		expect(result.current.deviceMemoryGB).toBe(8);
-	});
-
-	it("falls back to mobile detection when deviceMemory unavailable", () => {
-		const service = createMockService({
-			getScreenWidth: () => 500,
-			getDeviceMemoryGB: () => null,
-		});
-
-		const { result } = renderHook(() => useMobileDetection(service));
-
-		expect(result.current.isMobile).toBe(true);
-		expect(result.current.isLowMemory).toBe(true);
-		expect(result.current.deviceMemoryGB).toBe(null);
-	});
-
-	it("uses deviceMemory over mobile detection when available", () => {
-		// Mobile screen but high memory - should NOT be low memory
-		const service = createMockService({
-			getScreenWidth: () => 375,
-			getDeviceMemoryGB: () => 8,
-		});
-
-		const { result } = renderHook(() => useMobileDetection(service));
-
-		expect(result.current.isMobile).toBe(true);
-		expect(result.current.isLowMemory).toBe(false); // deviceMemory takes precedence
 	});
 
 	it("calls resize listener on mount and cleanup", () => {
