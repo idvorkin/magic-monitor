@@ -82,7 +82,7 @@ React 19 + TypeScript + Vite + Tailwind CSS application for real-time camera mir
 
 **useSmartZoom** - AI-powered auto-zoom using MediaPipe HandLandmarker
 
-- Tracks hands in video and calculates bounding box
+- Calculates bounding box from hand landmarks detected by `useHandLandmarks`
 - Applies hysteresis/deadband to prevent jitter
 - Smooth interpolation (lerp) for stable transitions
 
@@ -128,7 +128,7 @@ Use the **rAF ref-reading pattern** when data changes at 30-60fps but React re-r
 
 **Pattern:**
 ```tsx
-// Producer hook (e.g. useSmartZoom)
+// Producer hook (e.g. useHandLandmarks)
 const valueRef = useRef(0);
 // In rAF loop:
 valueRef.current = newValue;

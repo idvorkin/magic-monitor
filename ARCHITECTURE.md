@@ -113,7 +113,7 @@ Business logic lives in custom hooks, not components. Each hook owns a specific 
 | Hook | Responsibility |
 |------|---------------|
 | useCamera | Device enumeration, stream lifecycle, permission handling |
-| useSmartZoom | MediaPipe hand tracking, zoom/pan calculation, smoothing |
+| useSmartZoom | Zoom/pan calculation, smoothing (consumes landmarks from `useHandLandmarks`) |
 | useSessionRecorder | Recording sessions with blocks and rotation |
 | useReplayPlayer | Playback controls, seeking, speed |
 | useSessionList | List/delete sessions from IndexedDB |
