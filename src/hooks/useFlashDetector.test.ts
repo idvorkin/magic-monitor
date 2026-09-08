@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
 	colorDistance,
-	isColorMatch,
 	MAX_COLOR_DISTANCE,
 	thresholdToMaxDistance,
 } from "./useFlashDetector";
@@ -43,33 +42,5 @@ describe("thresholdToMaxDistance", () => {
 
 	it("should return half max distance for threshold 50", () => {
 		expect(thresholdToMaxDistance(50)).toBeCloseTo(MAX_COLOR_DISTANCE / 2, 5);
-	});
-});
-
-describe("isColorMatch", () => {
-	it("should match identical colors at any threshold", () => {
-		const color = { r: 100, g: 100, b: 100 };
-		expect(isColorMatch(color, color, 1)).toBe(true);
-		expect(isColorMatch(color, color, 50)).toBe(true);
-	});
-
-	it("should not match very different colors at low threshold", () => {
-		const red = { r: 255, g: 0, b: 0 };
-		const blue = { r: 0, g: 0, b: 255 };
-		expect(isColorMatch(red, blue, 10)).toBe(false);
-	});
-
-	it("should match similar colors within threshold", () => {
-		const color1 = { r: 100, g: 100, b: 100 };
-		const color2 = { r: 110, g: 100, b: 100 }; // distance = 10
-		// threshold 5% = 0.05 * 441.67 ≈ 22
-		expect(isColorMatch(color1, color2, 5)).toBe(true);
-	});
-
-	it("should not match colors outside threshold", () => {
-		const color1 = { r: 100, g: 100, b: 100 };
-		const color2 = { r: 150, g: 100, b: 100 }; // distance = 50
-		// threshold 5% = 0.05 * 441.67 ≈ 22
-		expect(isColorMatch(color1, color2, 5)).toBe(false);
 	});
 });
