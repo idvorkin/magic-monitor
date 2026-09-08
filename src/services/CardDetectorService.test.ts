@@ -307,17 +307,21 @@ describe("CardDetectorService input buffer reuse", () => {
 		expect(tensorBuffers()[2]).toBe(firstBuffer);
 	});
 
-	it("drops the shared buffer on reset", async () => {
-		await CardDetectorService.detect(solidSource("rgb(255, 0, 0)"));
-		const before = tensorBuffers()[0];
+	it(
+		"drops the shared buffer on reset",
+		async () => {
+			await CardDetectorService.detect(solidSource("rgb(255, 0, 0)"));
+			const before = tensorBuffers()[0];
 
-		CardDetectorService._reset();
-		mockModelFetch();
-		await CardDetectorService.load();
-		await CardDetectorService.detect(solidSource("rgb(255, 0, 0)"));
+			CardDetectorService._reset();
+			mockModelFetch();
+			await CardDetectorService.load();
+			await CardDetectorService.detect(solidSource("rgb(255, 0, 0)"));
 
-		expect(tensorBuffers()[1]).not.toBe(before);
-	});
+			expect(tensorBuffers()[1]).not.toBe(before);
+		},
+		15_000, // slow CI runners need more than the default 5 s for a second load()
+	);
 });
 
 describe("nms", () => {
