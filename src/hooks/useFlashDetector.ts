@@ -30,16 +30,6 @@ export function thresholdToMaxDistance(threshold: number): number {
 	return (threshold / 100) * MAX_COLOR_DISTANCE;
 }
 
-/** Check if a color matches the target within threshold */
-export function isColorMatch(
-	sample: RGB,
-	target: RGB,
-	threshold: number,
-): boolean {
-	const maxDist = thresholdToMaxDistance(threshold);
-	return colorDistance(sample, target) < maxDist;
-}
-
 export function useFlashDetector({
 	videoRef,
 	enabled,
