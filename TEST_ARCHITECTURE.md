@@ -123,7 +123,8 @@ describe("SessionStorageService", () => {
 
     it("should save a session and return an ID", async () => {
         const session = createTestSession();
-        const id = await SessionStorageService.saveSession(session);
+        const blob = new Blob(["test"], { type: "video/webm" });
+        const id = await SessionStorageService.saveSessionWithBlob(session, blob);
 
         expect(typeof id).toBe("string");
         expect(id.length).toBeGreaterThan(0);

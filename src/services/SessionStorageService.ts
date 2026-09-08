@@ -122,34 +122,6 @@ export const SessionStorageService = {
 		return settleTransaction(tx, () => id);
 	},
 
-	/**
-	 * Save a new session. Returns the generated session ID.
-	 */
-	async saveSession(session: Omit<PracticeSession, "id">): Promise<string> {
-		const db = await getDB();
-		const id = generateId();
-		const fullSession: PracticeSession = { ...session, id };
-
-		const tx = db.transaction(SESSIONS_STORE, "readwrite");
-		const store = tx.objectStore(SESSIONS_STORE);
-		store.add(fullSession);
-
-		return settleTransaction(tx, () => id);
-	},
-
-	/**
-	 * Save a video blob for a session.
-	 */
-	async saveBlob(id: string, blob: Blob): Promise<void> {
-		const db = await getDB();
-
-		const tx = db.transaction(BLOBS_STORE, "readwrite");
-		const store = tx.objectStore(BLOBS_STORE);
-		store.put({ id, blob });
-
-		return settleTransaction(tx, () => undefined);
-	},
-
 	// ===== Read =====
 
 	/**
@@ -217,22 +189,6 @@ export const SessionStorageService = {
 		);
 	},
 
-	/**
-	 * Get all sessions.
-	 */
-	async getAllSessions(): Promise<PracticeSession[]> {
-		const db = await getDB();
-
-		const tx = db.transaction(SESSIONS_STORE, "readonly");
-		const request = tx.objectStore(SESSIONS_STORE).getAll();
-
-		return settleTransaction(tx, () => {
-			const sessions = request.result as PracticeSession[];
-			sessions.sort((a, b) => b.createdAt - a.createdAt);
-			return sessions;
-		});
-	},
-
 	// ===== Update =====
 
 	/**
@@ -275,30 +231,6 @@ export const SessionStorageService = {
 	},
 
 	// ===== Delete =====
-
-	/**
-	 * Delete a session (metadata only).
-	 */
-	async deleteSession(id: string): Promise<void> {
-		const db = await getDB();
-
-		const tx = db.transaction(SESSIONS_STORE, "readwrite");
-		tx.objectStore(SESSIONS_STORE).delete(id);
-
-		return settleTransaction(tx, () => undefined);
-	},
-
-	/**
-	 * Delete a blob.
-	 */
-	async deleteBlob(id: string): Promise<void> {
-		const db = await getDB();
-
-		const tx = db.transaction(BLOBS_STORE, "readwrite");
-		tx.objectStore(BLOBS_STORE).delete(id);
-
-		return settleTransaction(tx, () => undefined);
-	},
 
 	/**
 	 * Delete a session and its blob together atomically.
