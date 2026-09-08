@@ -287,8 +287,13 @@ export function useReplayPlayer({
 
 	const seek = useCallback(
 		(time: number) => {
-			if (videoElement && isReady && Number.isFinite(videoElement.duration)) {
-				const clampedTime = Math.max(0, Math.min(time, videoElement.duration));
+			if (videoElement && isReady) {
+				// Clamp to [0, duration] when duration is finite; when the browser
+				// reports Infinity (e.g. raw MediaRecorder WebM without a Duration
+				// header) skip the upper clamp so the browser handles it naturally.
+				const clampedTime = Number.isFinite(videoElement.duration)
+					? Math.max(0, Math.min(time, videoElement.duration))
+					: Math.max(0, time);
 				videoElement.currentTime = clampedTime;
 				setCurrentTime(clampedTime);
 			} else if (session) {
@@ -414,7 +419,13 @@ export function useReplayPlayer({
 		// Event handlers
 		const handleLoadedMetadata = () => {
 			clearLoadTimeout();
-			setDuration(videoElement.duration);
+			// Raw MediaRecorder WebM blobs often lack a Duration header, causing
+			// the browser to report Infinity. Fall back to the session's stored
+			// duration so the scrubber can still compute seek positions correctly.
+			const effectiveDuration = Number.isFinite(videoElement.duration)
+				? videoElement.duration
+				: (session?.duration ?? 0);
+			setDuration(effectiveDuration);
 			setIsLoading(false);
 			setIsReady(true);
 
