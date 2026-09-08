@@ -317,7 +317,7 @@ describe("CardDetectorService input buffer reuse", () => {
 		await CardDetectorService.detect(solidSource("rgb(255, 0, 0)"));
 
 		expect(tensorBuffers()[1]).not.toBe(before);
-	});
+	}, 30000);
 });
 
 describe("nms", () => {

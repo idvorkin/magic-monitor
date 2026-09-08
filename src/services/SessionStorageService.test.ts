@@ -21,6 +21,15 @@ function createTestSession(
 	};
 }
 
+function saveTestSession(
+	overrides: Partial<PracticeSession> = {},
+): Promise<string> {
+	return SessionStorageService.saveSessionWithBlob(
+		createTestSession(overrides),
+		new Blob(["test video data"], { type: "video/webm" }),
+	);
+}
+
 // Note: Blob storage tests are skipped because fake-indexeddb in jsdom
 // doesn't handle Blob structuredClone correctly. These work in real browsers.
 
@@ -51,8 +60,7 @@ describe("SessionStorageService", () => {
 		it("has onclose handler that clears dbInstance on unexpected closure", async () => {
 			// Initialize the database and save a session
 			await SessionStorageService.init();
-			const session = createTestSession();
-			const id = await SessionStorageService.saveSession(session);
+			const id = await saveTestSession();
 			expect(id).toBeDefined();
 
 			// Access the DB to ensure dbInstance is set
@@ -72,8 +80,7 @@ describe("SessionStorageService", () => {
 			SessionStorageService.close();
 
 			// After close, should be able to save and retrieve new session
-			const session2 = createTestSession();
-			const id2 = await SessionStorageService.saveSession(session2);
+			const id2 = await saveTestSession();
 			expect(id2).toBeDefined();
 
 			const retrieved2 = await SessionStorageService.getSession(id2);
@@ -81,34 +88,14 @@ describe("SessionStorageService", () => {
 		});
 	});
 
-	describe("saveSession", () => {
-		it("saves a session and returns an ID", async () => {
-			const session = createTestSession();
-			const id = await SessionStorageService.saveSession(session);
-
-			expect(id).toBeDefined();
-			expect(typeof id).toBe("string");
-			expect(id.length).toBeGreaterThan(0);
-		});
-
-		it("saved session can be retrieved", async () => {
-			const session = createTestSession({ duration: 120 });
-			const id = await SessionStorageService.saveSession(session);
-
-			const retrieved = await SessionStorageService.getSession(id);
-			expect(retrieved).not.toBeNull();
-			expect(retrieved?.id).toBe(id);
-			expect(retrieved?.duration).toBe(120);
-			expect(retrieved?.saved).toBe(false);
-		});
-	});
-
 	describe("saveSessionWithBlob", () => {
 		it("saves both session and blob atomically", async () => {
-			const session = createTestSession({ duration: 120 });
 			const blob = new Blob(["test video data"], { type: "video/webm" });
 
-			const id = await SessionStorageService.saveSessionWithBlob(session, blob);
+			const id = await SessionStorageService.saveSessionWithBlob(
+				createTestSession({ duration: 120 }),
+				blob,
+			);
 
 			expect(id).toBeDefined();
 			expect(typeof id).toBe("string");
@@ -123,36 +110,10 @@ describe("SessionStorageService", () => {
 		});
 	});
 
-	describe("saveBlob and getBlob", () => {
-		// Note: Blob storage tests are skipped - fake-indexeddb doesn't properly
-		// handle Blob structuredClone in jsdom. These work in real browsers.
-		it.skip("saves and retrieves a blob", async () => {
-			const blob = new Blob(["test video data"], { type: "video/webm" });
-			const id = "test-blob-id";
-
-			await SessionStorageService.saveBlob(id, blob);
-			const retrieved = await SessionStorageService.getBlob(id);
-
-			expect(retrieved).not.toBeNull();
-			expect(retrieved?.size).toBe(blob.size);
-			expect(retrieved?.type).toBe(blob.type);
-		});
-
+	describe("getBlob", () => {
 		it("returns null for non-existent blob", async () => {
 			const result = await SessionStorageService.getBlob("non-existent");
 			expect(result).toBeNull();
-		});
-
-		it.skip("overwrites existing blob with same ID", async () => {
-			const id = "overwrite-test";
-			const blob1 = new Blob(["first"], { type: "video/webm" });
-			const blob2 = new Blob(["second longer"], { type: "video/webm" });
-
-			await SessionStorageService.saveBlob(id, blob1);
-			await SessionStorageService.saveBlob(id, blob2);
-
-			const retrieved = await SessionStorageService.getBlob(id);
-			expect(retrieved?.size).toBe(blob2.size);
 		});
 	});
 
@@ -170,12 +131,8 @@ describe("SessionStorageService", () => {
 		});
 
 		it("returns only unsaved sessions", async () => {
-			await SessionStorageService.saveSession(
-				createTestSession({ saved: false }),
-			);
-			await SessionStorageService.saveSession(
-				createTestSession({ saved: true }),
-			);
+			await saveTestSession({ saved: false });
+			await saveTestSession({ saved: true });
 
 			const recent = await SessionStorageService.getRecentSessions();
 			expect(recent.length).toBe(1);
@@ -184,15 +141,9 @@ describe("SessionStorageService", () => {
 
 		it("returns sessions ordered by createdAt descending", async () => {
 			const now = Date.now();
-			await SessionStorageService.saveSession(
-				createTestSession({ createdAt: now - 2000 }),
-			);
-			await SessionStorageService.saveSession(
-				createTestSession({ createdAt: now }),
-			);
-			await SessionStorageService.saveSession(
-				createTestSession({ createdAt: now - 1000 }),
-			);
+			await saveTestSession({ createdAt: now - 2000 });
+			await saveTestSession({ createdAt: now });
+			await saveTestSession({ createdAt: now - 1000 });
 
 			const recent = await SessionStorageService.getRecentSessions();
 			expect(recent.length).toBe(3);
@@ -203,7 +154,7 @@ describe("SessionStorageService", () => {
 
 		it("respects limit parameter", async () => {
 			for (let i = 0; i < 5; i++) {
-				await SessionStorageService.saveSession(createTestSession());
+				await saveTestSession();
 			}
 
 			const limited = await SessionStorageService.getRecentSessions(2);
@@ -213,23 +164,15 @@ describe("SessionStorageService", () => {
 
 	describe("getSavedSessions", () => {
 		it("returns empty array when no saved sessions exist", async () => {
-			await SessionStorageService.saveSession(
-				createTestSession({ saved: false }),
-			);
+			await saveTestSession({ saved: false });
 			const result = await SessionStorageService.getSavedSessions();
 			expect(result).toEqual([]);
 		});
 
 		it("returns only saved sessions", async () => {
-			await SessionStorageService.saveSession(
-				createTestSession({ saved: true, name: "Saved one" }),
-			);
-			await SessionStorageService.saveSession(
-				createTestSession({ saved: false }),
-			);
-			await SessionStorageService.saveSession(
-				createTestSession({ saved: true, name: "Saved two" }),
-			);
+			await saveTestSession({ saved: true, name: "Saved one" });
+			await saveTestSession({ saved: false });
+			await saveTestSession({ saved: true, name: "Saved two" });
 
 			const saved = await SessionStorageService.getSavedSessions();
 			expect(saved.length).toBe(2);
@@ -237,25 +180,9 @@ describe("SessionStorageService", () => {
 		});
 	});
 
-	describe("getAllSessions", () => {
-		it("returns all sessions regardless of saved status", async () => {
-			await SessionStorageService.saveSession(
-				createTestSession({ saved: true }),
-			);
-			await SessionStorageService.saveSession(
-				createTestSession({ saved: false }),
-			);
-
-			const all = await SessionStorageService.getAllSessions();
-			expect(all.length).toBe(2);
-		});
-	});
-
 	describe("updateSession", () => {
 		it("updates session fields", async () => {
-			const id = await SessionStorageService.saveSession(
-				createTestSession({ duration: 60 }),
-			);
+			const id = await saveTestSession({ duration: 60 });
 
 			await SessionStorageService.updateSession(id, { duration: 120 });
 
@@ -264,8 +191,7 @@ describe("SessionStorageService", () => {
 		});
 
 		it("preserves unmodified fields", async () => {
-			const session = createTestSession({ duration: 60, saved: false });
-			const id = await SessionStorageService.saveSession(session);
+			const id = await saveTestSession({ duration: 60, saved: false });
 
 			await SessionStorageService.updateSession(id, { saved: true });
 
@@ -283,9 +209,7 @@ describe("SessionStorageService", () => {
 
 	describe("markAsSaved", () => {
 		it("marks session as saved with name", async () => {
-			const id = await SessionStorageService.saveSession(
-				createTestSession({ saved: false }),
-			);
+			const id = await saveTestSession({ saved: false });
 
 			await SessionStorageService.markAsSaved(id, "My Practice");
 
@@ -297,7 +221,7 @@ describe("SessionStorageService", () => {
 
 	describe("setTrimPoints", () => {
 		it("sets trim in and out points", async () => {
-			const id = await SessionStorageService.saveSession(createTestSession());
+			const id = await saveTestSession();
 
 			await SessionStorageService.setTrimPoints(id, 5.0, 55.0);
 
@@ -307,36 +231,9 @@ describe("SessionStorageService", () => {
 		});
 	});
 
-	describe("deleteSession", () => {
-		it("deletes a session", async () => {
-			const id = await SessionStorageService.saveSession(createTestSession());
-
-			await SessionStorageService.deleteSession(id);
-
-			const result = await SessionStorageService.getSession(id);
-			expect(result).toBeNull();
-		});
-	});
-
-	describe("deleteBlob", () => {
-		it("deletes a blob", async () => {
-			const id = "delete-blob-test";
-			const blob = new Blob(["test"], { type: "video/webm" });
-			await SessionStorageService.saveBlob(id, blob);
-
-			await SessionStorageService.deleteBlob(id);
-
-			const result = await SessionStorageService.getBlob(id);
-			expect(result).toBeNull();
-		});
-	});
-
 	describe("deleteSessionWithBlob", () => {
 		it("deletes both session and blob", async () => {
-			const session = createTestSession();
-			const id = await SessionStorageService.saveSession(session);
-			const blob = new Blob(["test"], { type: "video/webm" });
-			await SessionStorageService.saveBlob(id, blob);
+			const id = await saveTestSession();
 
 			await SessionStorageService.deleteSessionWithBlob(id);
 
@@ -346,10 +243,7 @@ describe("SessionStorageService", () => {
 
 		it("deletes session only when both session and blob exist", async () => {
 			// Verify that delete succeeds atomically
-			const session = createTestSession();
-			const id = await SessionStorageService.saveSession(session);
-			const blob = new Blob(["test"], { type: "video/webm" });
-			await SessionStorageService.saveBlob(id, blob);
+			const id = await saveTestSession();
 
 			// Successful deletion - both should be gone
 			await SessionStorageService.deleteSessionWithBlob(id);
@@ -357,33 +251,15 @@ describe("SessionStorageService", () => {
 			expect(await SessionStorageService.getSession(id)).toBeNull();
 			expect(await SessionStorageService.getBlob(id)).toBeNull();
 		});
-
-		it("handles deletion when blob does not exist", async () => {
-			// Delete should succeed even if blob doesn't exist
-			const session = createTestSession();
-			const id = await SessionStorageService.saveSession(session);
-
-			// Don't save a blob - only session exists
-			await SessionStorageService.deleteSessionWithBlob(id);
-
-			// Session should be deleted regardless
-			expect(await SessionStorageService.getSession(id)).toBeNull();
-		});
 	});
 
 	describe("pruneOldSessions", () => {
 		it("keeps sessions within duration limit", async () => {
 			const now = Date.now();
 			// Create 3 sessions, each 120 seconds
-			await SessionStorageService.saveSession(
-				createTestSession({ createdAt: now, duration: 120 }),
-			);
-			await SessionStorageService.saveSession(
-				createTestSession({ createdAt: now - 1000, duration: 120 }),
-			);
-			await SessionStorageService.saveSession(
-				createTestSession({ createdAt: now - 2000, duration: 120 }),
-			);
+			await saveTestSession({ createdAt: now, duration: 120 });
+			await saveTestSession({ createdAt: now - 1000, duration: 120 });
+			await saveTestSession({ createdAt: now - 2000, duration: 120 });
 
 			// Keep only 200 seconds worth (should keep first 2)
 			const deleted = await SessionStorageService.pruneOldSessions(200);
@@ -395,16 +271,12 @@ describe("SessionStorageService", () => {
 
 		it("does not prune saved sessions", async () => {
 			const now = Date.now();
-			await SessionStorageService.saveSession(
-				createTestSession({ createdAt: now, duration: 60, saved: false }),
-			);
-			await SessionStorageService.saveSession(
-				createTestSession({
-					createdAt: now - 1000,
-					duration: 60,
-					saved: true,
-				}),
-			);
+			await saveTestSession({ createdAt: now, duration: 60, saved: false });
+			await saveTestSession({
+				createdAt: now - 1000,
+				duration: 60,
+				saved: true,
+			});
 
 			// Try to prune with 0 duration limit
 			await SessionStorageService.pruneOldSessions(0);
@@ -417,17 +289,15 @@ describe("SessionStorageService", () => {
 
 	describe("clear", () => {
 		it("removes all sessions and blobs", async () => {
-			await SessionStorageService.saveSession(createTestSession());
-			await SessionStorageService.saveSession(createTestSession());
-			await SessionStorageService.saveBlob(
-				"test",
-				new Blob(["test"], { type: "video/webm" }),
-			);
+			const id1 = await saveTestSession({ saved: false });
+			const id2 = await saveTestSession({ saved: true });
 
 			await SessionStorageService.clear();
 
-			expect(await SessionStorageService.getAllSessions()).toEqual([]);
-			expect(await SessionStorageService.getBlob("test")).toBeNull();
+			expect(await SessionStorageService.getRecentSessions()).toEqual([]);
+			expect(await SessionStorageService.getSavedSessions()).toEqual([]);
+			expect(await SessionStorageService.getBlob(id1)).toBeNull();
+			expect(await SessionStorageService.getBlob(id2)).toBeNull();
 		});
 	});
 
