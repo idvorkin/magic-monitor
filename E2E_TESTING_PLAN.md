@@ -512,7 +512,7 @@ Project-specific E2E testing details for the Magic Monitor application.
 - ✅ Video recording (`video: "on"`)
 - ✅ Screenshots (`screenshot: "on"`)
 - ✅ Trace recording (`trace: "on"`)
-- ✅ HTTPS support with `ignoreHTTPSErrors: true`
+- ✅ Test server pinned to plain HTTP via `VITE_DEV_SERVER_PLAIN_HTTP`
 - ✅ Headless mode enabled
 - ✅ Desktop (Chromium) and Mobile (WebKit/iPhone 14 Pro) projects
 
