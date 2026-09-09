@@ -1,5 +1,6 @@
 import { Bug, ExternalLink, GitBranch, GitCommit, Github } from "lucide-react";
 import { useFocusTrap } from "../hooks/useFocusTrap";
+import { sanitizeGitUrl } from "../utils/bugReportFormatters";
 import {
 	BUILD_TIMESTAMP,
 	GIT_BRANCH,
@@ -83,7 +84,7 @@ export function AboutModal({
 							<GitCommit className="w-4 h-4 text-gray-400" />
 							<span className="text-sm text-gray-400 w-16">Commit</span>
 							<a
-								href={GIT_COMMIT_URL}
+								href={sanitizeGitUrl(GIT_COMMIT_URL)}
 								target="_blank"
 								rel="noopener noreferrer"
 								className="text-sm text-blue-400 hover:text-blue-300 font-mono flex items-center gap-1"
@@ -98,7 +99,7 @@ export function AboutModal({
 							<GitBranch className="w-4 h-4 text-gray-400" />
 							<span className="text-sm text-gray-400 w-16">Branch</span>
 							<a
-								href={GIT_CURRENT_URL}
+								href={sanitizeGitUrl(GIT_CURRENT_URL)}
 								target="_blank"
 								rel="noopener noreferrer"
 								className="text-sm text-blue-400 hover:text-blue-300 font-mono flex items-center gap-1"

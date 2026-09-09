@@ -3,7 +3,7 @@
 
 SHA=$(git rev-parse HEAD)
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
-REPO_URL=$(git remote get-url origin | sed 's/\.git$//' | sed 's|git@github.com:|https://github.com/|')
+REPO_URL=$(git remote get-url origin | sed 's/\.git$//' | sed 's|git@github.com:|https://github.com/|' | sed -E 's#://[^/@]*@#://#')
 COMMIT_URL="$REPO_URL/commit/$SHA"
 CURRENT_URL="$REPO_URL/tree/$BRANCH"
 BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
