@@ -96,18 +96,21 @@ export function useBlockRecorder({
 		// Validate stream health before attempting to record
 		if (!stream.active) {
 			setError("Camera stream is not active. Try refreshing the page.");
+			cleanupClonedStream();
 			return;
 		}
 
 		const videoTracks = stream.getVideoTracks();
 		if (videoTracks.length === 0) {
 			setError("No video track available from camera.");
+			cleanupClonedStream();
 			return;
 		}
 
 		const liveTrack = videoTracks.find((t) => t.readyState === "live");
 		if (!liveTrack) {
 			setError("Camera video track has ended. Try selecting a different camera.");
+			cleanupClonedStream();
 			return;
 		}
 
@@ -162,6 +165,7 @@ export function useBlockRecorder({
 				});
 				setError(errorMessage);
 				setIsRecording(false);
+				cleanupClonedStream();
 				return;
 			}
 
@@ -175,6 +179,7 @@ export function useBlockRecorder({
 			console.error("Failed to create recording session:", err);
 			setError("Recording failed - check camera connection");
 			setIsRecording(false);
+			cleanupClonedStream();
 		}
 	}, [
 		videoRef,
