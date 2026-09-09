@@ -9,6 +9,8 @@ declare global {
 	interface Window {
 		mockCamera: {
 			setColor: (color: string) => void;
+			lastConstraints: MediaStreamConstraints | null | undefined;
+			callCount: number;
 		};
 	}
 }
@@ -64,6 +66,10 @@ async function injectMockCamera(page: Page) {
 			setColor: (color: string) => {
 				currentColor = color;
 			},
+			// Record every getUserMedia call so tests can assert the
+			// MediaStreamConstraints the app builds (e.g. portrait shape).
+			lastConstraints: null as MediaStreamConstraints | null | undefined,
+			callCount: 0,
 		};
 
 		// Create a fresh stream each time to avoid inactive stream issues
@@ -82,6 +88,9 @@ async function injectMockCamera(page: Page) {
 
 		navigator.mediaDevices.getUserMedia = async (constraints) => {
 			console.log("Mock getUserMedia called with:", constraints);
+			// Snapshot the constraints for assertion by tests.
+			window.mockCamera.lastConstraints = constraints;
+			window.mockCamera.callCount += 1;
 			// Always return a fresh stream to ensure it's active
 			activeStream = createMockStream();
 			return activeStream;
@@ -713,6 +722,49 @@ test.describe("Magic Monitor E2E", () => {
 		// Landscape should be active again
 		await expect(landscapeButton).toHaveClass(/bg-blue-600/);
 		await expect(portraitButton).not.toHaveClass(/bg-blue-600/);
+	});
+
+	test("Settings: Orientation toggle requests a portrait/landscape-shaped MediaStreamConstraints", async ({ page }) => {
+		// The mock camera's getUserMedia records every call's constraints
+		// onto window.mockCamera.lastConstraints (see injectMockCamera).
+		await expect.poll(() => page.evaluate(() => window.mockCamera.callCount)).toBeGreaterThan(0);
+
+		// Sanity: the initial landscape request pairs width >= height.
+		const landscape = await page.evaluate(() => window.mockCamera.lastConstraints);
+		const landscapeVideo = landscape?.video as MediaTrackConstraints;
+		expect(landscapeVideo.width).toMatchObject({ ideal: expect.any(Number) });
+		expect(landscapeVideo.height).toMatchObject({ ideal: expect.any(Number) });
+		expect((landscapeVideo.height as ConstrainULongRange).ideal as number).toBeLessThanOrEqual(
+			(landscapeVideo.width as ConstrainULongRange).ideal as number,
+		);
+
+		// Open settings and switch to portrait.
+		await page.getByTitle("Settings").click();
+		const callsBeforePortrait = await page.evaluate(() => window.mockCamera.callCount);
+		await page.getByTitle("Portrait").click();
+
+		// Wait for the portrait re-start to call getUserMedia.
+		await expect.poll(() => page.evaluate(() => window.mockCamera.callCount)).toBeGreaterThan(callsBeforePortrait);
+
+		const portrait = await page.evaluate(() => window.mockCamera.lastConstraints);
+		const portraitVideo = portrait?.video as MediaTrackConstraints;
+		// Regression for 856da46: portrait MUST signal a height constraint,
+		// not a scalar width only.
+		expect(portraitVideo.height).toBeDefined();
+		expect((portraitVideo.height as ConstrainULongRange).ideal).toBeGreaterThan(
+			(portraitVideo.width as ConstrainULongRange).ideal as number,
+		);
+
+		// Switch back to landscape and confirm the ordering flips.
+		const callsBeforeLandscape = await page.evaluate(() => window.mockCamera.callCount);
+		await page.getByTitle("Landscape").click();
+		await expect.poll(() => page.evaluate(() => window.mockCamera.callCount)).toBeGreaterThan(callsBeforeLandscape);
+
+		const landscapeAgain = await page.evaluate(() => window.mockCamera.lastConstraints);
+		const landscapeAgainVideo = landscapeAgain?.video as MediaTrackConstraints;
+		expect((landscapeAgainVideo.width as ConstrainULongRange).ideal as number).toBeGreaterThan(
+			(landscapeAgainVideo.height as ConstrainULongRange).ideal as number,
+		);
 	});
 
 	// Think of a Card runs entirely off the key/button path - no camera frames,
