@@ -35,6 +35,20 @@ export function useCamera(initialDeviceId?: string) {
 			DeviceService.getStorageItem(DEVICE_ID_STORAGE_KEY) ||
 			"",
 	);
+	// DISPLAY ONLY: the id the dropdown shows. For an anonymous track (no
+	// deviceId in getSettings() — virtual/canvas sources) the real
+	// `selectedDeviceId` stays "" so re-runs keep using unconstrained
+	// getUserMedia (OS default), while the dropdown still shows the first
+	// enumerated device so the UI is not blank. Splitting display from
+	// selection stops the display-only first-list id from feeding back into
+	// `resolveCameraSelection` as `persistedId` (and `CameraService.start` as
+	// an `exact` deviceId), which silently switched the live camera to an
+	// unchosen device on resolution/orientation or ended-retry re-runs.
+	const [displayDeviceId, setDisplayDeviceId] = useState<string>(
+		initialDeviceId ||
+			DeviceService.getStorageItem(DEVICE_ID_STORAGE_KEY) ||
+			"",
+	);
 
 	// Load settings for currently selected device
 	const [resolution, setResolution] = useState<Resolution>(() => {
@@ -196,12 +210,19 @@ export function useCamera(initialDeviceId?: string) {
 					retryCount,
 				};
 
-				if (!effectiveSelectedId && displayId && isActive) {
-					setSelectedDeviceId(displayId);
-					if (trackDeviceId) {
-						// Only a device the browser actually opened gets persisted
-						DeviceService.setStorageItem(DEVICE_ID_STORAGE_KEY, trackDeviceId);
-					}
+				// The dropdown tracks the display id unconditionally (display-only
+				// first-list fallback for anonymous tracks). The real selection
+				// only adopts a device the browser actually opened: a null
+				// trackDeviceId means the source is anonymous (canvas/virtual) and
+				// must NOT reach selectedDeviceId — otherwise a later re-run
+				// (resolution/orientation change or ended-retry) feeds it to
+				// resolveCameraSelection as persistedId and CameraService.start
+				// applies it as an exact deviceId, switching the camera.
+				setDisplayDeviceId(displayId);
+				if (!effectiveSelectedId && trackDeviceId && isActive) {
+					setSelectedDeviceId(trackDeviceId);
+					// Only a device the browser actually opened gets persisted
+					DeviceService.setStorageItem(DEVICE_ID_STORAGE_KEY, trackDeviceId);
 				}
 			} catch (err) {
 				if (isActive) {
@@ -252,6 +273,7 @@ export function useCamera(initialDeviceId?: string) {
 	// Wrap setter to persist selection and load device-specific settings
 	const handleSetSelectedDeviceId = useCallback((deviceId: string) => {
 		setSelectedDeviceId(deviceId);
+		setDisplayDeviceId(deviceId);
 		DeviceService.setStorageItem(DEVICE_ID_STORAGE_KEY, deviceId);
 
 		// Load settings for the new device
@@ -289,6 +311,7 @@ export function useCamera(initialDeviceId?: string) {
 		error,
 		devices,
 		selectedDeviceId,
+		displayDeviceId,
 		setSelectedDeviceId: handleSetSelectedDeviceId,
 		resolution,
 		setResolution: handleSetResolution,
