@@ -70,6 +70,32 @@ function createMockVideoRef(hasStream = true) {
 	};
 }
 
+// Variant of createMockStream whose cloned track's stop() is observable via
+// `stopSpy`. Used to assert the clone is released on startRecording failure
+// paths.
+function createMockStreamWithStopSpy(stopSpy: ReturnType<typeof vi.fn>) {
+	const stream = new MediaStream();
+	stream.clone = vi.fn(() => {
+		const cloned = new MediaStream();
+		cloned.getTracks = vi.fn(() => [
+			{ stop: stopSpy, kind: "video" } as unknown as MediaStreamTrack,
+		]);
+		return cloned;
+	});
+	return stream;
+}
+
+function createMockVideoRefWithStream(stream: MediaStream) {
+	return {
+		current: {
+			readyState: 4,
+			srcObject: stream,
+			videoWidth: 1920,
+			videoHeight: 1080,
+		} as unknown as HTMLVideoElement,
+	} as unknown as React.RefObject<HTMLVideoElement | null>;
+}
+
 describe("useBlockRecorder", () => {
 	let mockRecorder: ReturnType<typeof createMockMediaRecorder>;
 	let mockTimer: ReturnType<typeof createMockTimerService>;
@@ -337,5 +363,102 @@ describe("useBlockRecorder", () => {
 		// stuck "recording".)
 		expect(result.current.getState()).toBe("inactive");
 		expect(result.current.isRecording).toBe(false);
+	});
+
+	describe("cloned stream cleanup on start failure", () => {
+		it("stops cloned tracks immediately when session.start() throws", () => {
+			const stopSpy = vi.fn();
+			const videoRef = createMockVideoRefWithStream(
+				createMockStreamWithStopSpy(stopSpy),
+			);
+			const mockSession = mockRecorder.startRecording(
+				new MediaStream(),
+				{},
+			) as RecordingSession;
+			(mockSession.start as ReturnType<typeof vi.fn>).mockImplementation(() => {
+				throw new Error("MediaRecorder start failed");
+			});
+
+			const { result } = renderHook(() =>
+				useBlockRecorder({
+					videoRef,
+					mediaRecorderService: mockRecorder,
+					timerService: mockTimer,
+				}),
+			);
+
+			act(() => {
+				result.current.startRecording();
+			});
+
+			expect(result.current.error).toBe("MediaRecorder start failed");
+			expect(result.current.isRecording).toBe(false);
+			expect(stopSpy).toHaveBeenCalledTimes(1);
+		});
+
+		it("stops cloned tracks immediately when MediaRecorder construction throws", () => {
+			const stopSpy = vi.fn();
+			const videoRef = createMockVideoRefWithStream(
+				createMockStreamWithStopSpy(stopSpy),
+			);
+			mockRecorder.startRecording.mockImplementation(() => {
+				throw new Error("Unsupported MIME type");
+			});
+
+			const { result } = renderHook(() =>
+				useBlockRecorder({
+					videoRef,
+					mediaRecorderService: mockRecorder,
+					timerService: mockTimer,
+				}),
+			);
+
+			act(() => {
+				result.current.startRecording();
+			});
+
+			expect(result.current.error).toBe(
+				"Recording failed - check camera connection",
+			);
+			expect(result.current.isRecording).toBe(false);
+			expect(stopSpy).toHaveBeenCalledTimes(1);
+		});
+
+		it("does not double-clean at the block boundary after a failed start", async () => {
+			const stopSpy = vi.fn();
+			const videoRef = createMockVideoRefWithStream(
+				createMockStreamWithStopSpy(stopSpy),
+			);
+			const mockSession = mockRecorder.startRecording(
+				new MediaStream(),
+				{},
+			) as RecordingSession;
+			(mockSession.start as ReturnType<typeof vi.fn>).mockImplementation(() => {
+				throw new Error("MediaRecorder start failed");
+			});
+
+			const { result } = renderHook(() =>
+				useBlockRecorder({
+					videoRef,
+					mediaRecorderService: mockRecorder,
+					timerService: mockTimer,
+				}),
+			);
+
+			act(() => {
+				result.current.startRecording();
+			});
+			expect(stopSpy).toHaveBeenCalledTimes(1);
+
+			let stopResult: Awaited<ReturnType<typeof result.current.stopRecording>>;
+			await act(async () => {
+				stopResult = await result.current.stopRecording();
+			});
+
+			expect(stopResult!).toBeNull();
+			// The failed start already released the clone (stop called once);
+			// the block-boundary stop's !session guard must not call stop again.
+			expect(stopSpy).toHaveBeenCalledTimes(1);
+		});
 	});
 });
