@@ -322,6 +322,44 @@ export const SessionStorageService = {
 	// ===== Pruning =====
 
 	/**
+	 * Delete a session and its blob together atomically ONLY if the session
+	 * is still unsaved at delete time. Re-checks `saved` inside the same
+	 * readwrite transaction that performs the delete, so a `markAsSaved` that
+	 * commits `saved: true` between the prune's snapshot read and this delete
+	 * cannot be clobbered (TOCTOU). Returns true if deleted, false if skipped
+	 * because the session was saved during the race.
+	 *
+	 * Used only by pruning; explicit user-initiated deletion goes through
+	 * `deleteSessionWithBlob`, which deletes unconditionally.
+	 */
+	async deleteSessionIfUnsaved(id: string): Promise<boolean> {
+		const db = await getDB();
+
+		// Single transaction spanning both stores for atomicity.
+		const tx = db.transaction([SESSIONS_STORE, BLOBS_STORE], "readwrite");
+		const sessionsStore = tx.objectStore(SESSIONS_STORE);
+		const blobsStore = tx.objectStore(BLOBS_STORE);
+
+		let deleted = false;
+		// Re-check `saved` inside the delete transaction: issuing the deletes
+		// from the get's onsuccess keeps the read and the deletes on the same
+		// transaction, so a session marked saved since the prune snapshot
+		// survives the prune.
+		const getReq = sessionsStore.get(id);
+		getReq.onsuccess = () => {
+			const session = getReq.result as PracticeSession | undefined;
+			if (session?.saved) {
+				return; // saved during the race -> leave it alone
+			}
+			sessionsStore.delete(id);
+			blobsStore.delete(id);
+			deleted = true;
+		};
+
+		return settleTransaction(tx, () => deleted);
+	},
+
+	/**
 	 * Prune old unsaved sessions, keeping only the most recent ones
 	 * up to the configured duration limit.
 	 * Returns the count of deleted sessions.
@@ -345,10 +383,15 @@ export const SessionStorageService = {
 			}
 		}
 
-		// Delete old sessions and their blobs
-		await Promise.all(toDelete.map((id) => this.deleteSessionWithBlob(id)));
+		// Delete old sessions and their blobs. Each delete re-checks `saved`
+		// inside its own readwrite transaction so a session marked saved after
+		// the snapshot is not clobbered; count only the sessions actually
+		// deleted.
+		const results = await Promise.all(
+			toDelete.map((id) => this.deleteSessionIfUnsaved(id)),
+		);
 
-		return toDelete.length;
+		return results.filter((deleted) => deleted).length;
 	},
 
 	/**

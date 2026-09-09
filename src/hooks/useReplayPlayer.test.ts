@@ -34,6 +34,7 @@ function createMockSessionStorage() {
 		deleteSession: vi.fn(),
 		deleteBlob: vi.fn(),
 		deleteSessionWithBlob: vi.fn(),
+		deleteSessionIfUnsaved: vi.fn().mockResolvedValue(true),
 		getStorageUsage: vi.fn(),
 		clear: vi.fn(),
 		close: vi.fn(),
