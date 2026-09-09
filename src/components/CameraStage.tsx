@@ -277,6 +277,8 @@ export function CameraStage() {
 			// P: think of a card - starts a round, or clears the one on screen
 			if (e.key === "p" && appState === "live") {
 				e.preventDefault();
+				// A held key is one round, not a start-then-cancel: drop OS auto-repeat.
+				if (e.repeat) return;
 				toggleThinkOfACard("key");
 			}
 		};

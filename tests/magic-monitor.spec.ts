@@ -768,6 +768,56 @@ test.describe("Magic Monitor E2E", () => {
 		await page.getByRole("button", { name: "Dismiss think of a card" }).click();
 		await expect(page.getByTestId("think-overlay")).toBeHidden();
 	});
+
+	test("Think of a Card: held P key auto-repeat does not cancel the round", async ({
+		page,
+	}) => {
+		await expect(page.getByTestId("main-video")).toBeVisible();
+
+		// First press (repeat=false) starts the round.
+		await page.keyboard.press("p");
+		await expect(page.getByTestId("think-countdown")).toBeVisible();
+
+		// Simulate the OS auto-repeat keydown that a held P produces.
+		// This dispatches through the real handleKeyDown on window, so it
+		// exercises the actual keydown handler, not a synthetic machine call.
+		// Several repeats in one round-trip model a held key, not a single tap.
+		await page.evaluate(() => {
+			for (let i = 0; i < 5; i++) {
+				window.dispatchEvent(
+					new KeyboardEvent("keydown", {
+						key: "p",
+						repeat: true,
+						bubbles: true,
+					}),
+				);
+			}
+		});
+
+		// A held key must be exactly one round: the auto-repeat keydowns are
+		// dropped, so the countdown/overlay stays up instead of being dismissed.
+		await expect(page.getByTestId("think-countdown")).toBeVisible();
+		await expect(page.getByTestId("think-overlay")).toBeVisible();
+
+		// The round still completes normally - a card appears after the countdown.
+		const card = page.getByTestId("think-card");
+		await expect(card).toBeVisible({ timeout: 10000 });
+		await expect(page.getByTestId("think-overlay")).toBeVisible();
+	});
+
+	test("Think of a Card: a deliberate second P still dismisses the round", async ({
+		page,
+	}) => {
+		await expect(page.getByTestId("main-video")).toBeVisible();
+
+		// A genuine second press (repeat=false) must still clear the round -
+		// the e.repeat guard filters only OS auto-repeat, not a deliberate tap.
+		await page.keyboard.press("p");
+		await expect(page.getByTestId("think-countdown")).toBeVisible();
+
+		await page.keyboard.press("p");
+		await expect(page.getByTestId("think-overlay")).toBeHidden();
+	});
 });
 
 test.describe("Bug Report", () => {
