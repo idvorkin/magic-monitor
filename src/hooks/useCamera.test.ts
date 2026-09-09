@@ -171,9 +171,12 @@ describe("useCamera", () => {
 			const { result } = renderHook(() => useCamera());
 
 			await waitFor(() => {
-				expect(result.current.selectedDeviceId).toBe("device-1");
+				expect(result.current.displayDeviceId).toBe("device-1");
 			});
-			// Display-only fallback: nothing persisted (H1's poison was the persist)
+			// Display-only fallback: the real selection stays empty (OS default)
+			// so a later re-run cannot pin the unchosen id as an exact constraint.
+			expect(result.current.selectedDeviceId).toBe("");
+			// Nothing persisted (H1's poison was the persist)
 			expect(DeviceService.setStorageItem).not.toHaveBeenCalledWith(
 				"magic-monitor-camera-device-id",
 				expect.anything(),
@@ -259,6 +262,99 @@ describe("useCamera", () => {
 			unmount();
 
 			expect(cleanup).toHaveBeenCalled();
+		});
+	});
+
+	describe("anonymous-track re-run invariant", () => {
+		// A stream whose track reports NO deviceId (canvas/virtual sources).
+		// The display-only first-list fallback must drive ONLY the dropdown —
+		// the real selection stays "" so every later re-run (resolution/
+		// orientation change or ended-retry) re-opens the OS default
+		// unconstrained instead of pinning the unchosen id as an exact
+		// deviceId constraint that switches the live camera.
+		const DEVICES = [
+			createMockDevice("device-1", "Camera 1"),
+			createMockDevice("device-2", "Camera 2"),
+		];
+
+		function createAnonymousStream(): MediaStream {
+			const anonymousTrack = {
+				kind: "video",
+				stop: vi.fn(),
+				getSettings: () => ({}),
+				addEventListener: vi.fn(),
+				removeEventListener: vi.fn(),
+			};
+			return {
+				getTracks: () => [anonymousTrack],
+				getVideoTracks: () => [anonymousTrack],
+				getAudioTracks: () => [],
+				active: true,
+			} as unknown as MediaStream;
+		}
+
+		beforeEach(() => {
+			vi.mocked(CameraService.getVideoDevices).mockResolvedValue(DEVICES);
+		});
+
+		it("changing resolution after an anonymous-track adoption re-opens unconstrained instead of exact: first-enumerated", async () => {
+			vi.mocked(CameraService.start)
+				.mockResolvedValueOnce(createAnonymousStream())
+				.mockResolvedValueOnce(createMockStream("device-1"));
+
+			const { result } = renderHook(() => useCamera());
+
+			// First mount: anonymous stream, display-only adoption shows device-1
+			await waitFor(() => {
+				expect(result.current.displayDeviceId).toBe("device-1");
+			});
+			expect(result.current.selectedDeviceId).toBe("");
+			// First start must have been unconstrained (no persisted device)
+			expect(vi.mocked(CameraService.start).mock.calls[0][0]).toBeUndefined();
+
+			// User changes resolution — expects the SAME camera at new resolution
+			act(() => {
+				result.current.setResolution("1080p");
+			});
+
+			await waitFor(() => {
+				expect(vi.mocked(CameraService.start)).toHaveBeenCalledTimes(2);
+			});
+
+			// BUG (pre-fix): second start was called with "device-1" (exact),
+			// switching the camera. After fix: unconstrained (undefined).
+			const secondCall = vi.mocked(CameraService.start).mock.calls[1];
+			expect(
+				secondCall[0],
+				"expected unconstrained start, got exact id",
+			).toBeUndefined();
+		});
+
+		it("does not write per-device settings under the unchosen device id after an anonymous adoption", async () => {
+			vi.mocked(CameraService.start).mockResolvedValue(createAnonymousStream());
+
+			const { result } = renderHook(() => useCamera());
+
+			await waitFor(() => {
+				expect(result.current.displayDeviceId).toBe("device-1");
+			});
+			// Real selection is empty → updateSettingForDevice("") is a no-op
+			// (CameraSettingsService.saveSettingsForDevice guards on empty id),
+			// so the resolution choice is NOT orphaned under the unchosen id.
+			expect(result.current.selectedDeviceId).toBe("");
+
+			act(() => {
+				result.current.setResolution("1080p");
+			});
+
+			// The device-settings key must never receive a write keyed on the
+			// unchosen first-list device id.
+			const deviceSettingsCalls = vi
+				.mocked(DeviceService.setStorageItem)
+				.mock.calls.filter(
+					([key]) => key === "magic-monitor-camera-device-settings",
+				);
+			expect(deviceSettingsCalls).toHaveLength(0);
 		});
 	});
 

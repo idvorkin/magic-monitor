@@ -217,7 +217,7 @@ export function CameraStage() {
 		stream,
 		error,
 		devices,
-		selectedDeviceId,
+		displayDeviceId,
 		setSelectedDeviceId,
 		resolution,
 		setResolution,
@@ -466,7 +466,7 @@ export function CameraStage() {
 				isOpen={isSettingsOpen}
 				onClose={handleCloseSettings}
 				devices={devices}
-				selectedDeviceId={selectedDeviceId}
+				selectedDeviceId={displayDeviceId}
 				onDeviceChange={setSelectedDeviceId}
 				resolution={resolution}
 				onResolutionChange={setResolution}
