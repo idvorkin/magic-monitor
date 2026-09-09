@@ -73,6 +73,15 @@ export function useCardDetection({
 							video,
 							confidenceThreshold,
 						);
+						// Re-check `running` after the await: if the effect was torn
+						// down (or `enabled` flipped to false) while detection was in
+						// flight, the disable-clear effect has already reset
+						// detectionsRef/detections to []. Writing the now-stale
+						// `results` here would clobber that clear and flash the
+						// pre-disable frame's cards when detection is re-enabled.
+						// CardDetectorService.detect has no AbortSignal, so this
+						// guard is the only thing suppressing the late write.
+						if (!running) return;
 						detectTimeMsRef.current = performance.now() - t0;
 
 						detectionsRef.current = results;
