@@ -52,6 +52,7 @@ export function useFocusTrap({ isOpen, onClose }: UseFocusTrapOptions) {
 			// Handle Escape key
 			if (e.key === "Escape" && onClose) {
 				onClose();
+				e.stopPropagation();
 				return;
 			}
 

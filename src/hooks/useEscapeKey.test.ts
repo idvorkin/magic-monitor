@@ -160,4 +160,58 @@ describe("useEscapeKey", () => {
 
 		expect(onCloseSettings).not.toHaveBeenCalled();
 	});
+
+	it("calls onDismissThinkOfACard when thinking of a card (settings closed)", () => {
+		const onDismissThinkOfACard = vi.fn();
+		const onCloseSettings = vi.fn();
+		const onCancelColorPick = vi.fn();
+		const onExitReplay = vi.fn();
+
+		renderHook(() =>
+			useEscapeKey({
+				isThinkingOfACard: true,
+				isSettingsOpen: false,
+				isPickingColor: false,
+				isReplaying: false,
+				onDismissThinkOfACard,
+				onCloseSettings,
+				onCancelColorPick,
+				onExitReplay,
+			}),
+		);
+
+		fireEvent.keyDown(window, { key: "Escape" });
+
+		expect(onDismissThinkOfACard).toHaveBeenCalledTimes(1);
+		expect(onCloseSettings).not.toHaveBeenCalled();
+		expect(onCancelColorPick).not.toHaveBeenCalled();
+		expect(onExitReplay).not.toHaveBeenCalled();
+	});
+
+	it("prioritizes think-of-a-card over every other overlay when all are active", () => {
+		const onDismissThinkOfACard = vi.fn();
+		const onCloseSettings = vi.fn();
+		const onCancelColorPick = vi.fn();
+		const onExitReplay = vi.fn();
+
+		renderHook(() =>
+			useEscapeKey({
+				isThinkingOfACard: true,
+				isSettingsOpen: true,
+				isPickingColor: true,
+				isReplaying: true,
+				onDismissThinkOfACard,
+				onCloseSettings,
+				onCancelColorPick,
+				onExitReplay,
+			}),
+		);
+
+		fireEvent.keyDown(window, { key: "Escape" });
+
+		expect(onDismissThinkOfACard).toHaveBeenCalledTimes(1);
+		expect(onCloseSettings).not.toHaveBeenCalled();
+		expect(onCancelColorPick).not.toHaveBeenCalled();
+		expect(onExitReplay).not.toHaveBeenCalled();
+	});
 });
