@@ -768,6 +768,27 @@ test.describe("Magic Monitor E2E", () => {
 		await page.getByRole("button", { name: "Dismiss think of a card" }).click();
 		await expect(page.getByTestId("think-overlay")).toBeHidden();
 	});
+
+	test("Think of a Card: Escape over Settings closes only Settings, not the round", async ({
+		page,
+	}) => {
+		await expect(page.getByTestId("main-video")).toBeVisible();
+
+		// Start a think-of-a-card round - the 5s countdown window.
+		await page.keyboard.press("p");
+		await expect(page.getByTestId("think-countdown")).toBeVisible();
+
+		// Open Settings while the round is on screen.
+		await page.getByTitle("Settings").click();
+		await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+		await expect(page.getByTestId("think-overlay")).toBeVisible();
+
+		// A single Escape must dismiss exactly one overlay - the focus-stealing
+		// Settings modal - and leave the think-of-a-card round running.
+		await page.keyboard.press("Escape");
+		await expect(page.getByRole("heading", { name: "Settings" })).toBeHidden();
+		await expect(page.getByTestId("think-overlay")).toBeVisible();
+	});
 });
 
 test.describe("Bug Report", () => {
