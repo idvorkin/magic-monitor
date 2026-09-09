@@ -325,6 +325,104 @@ describe("useSessionRecorder", () => {
 		});
 	});
 
+	describe("recorder park stickiness through the readiness poll (M1 bug fix)", () => {
+		// A recorder whose startRecording() captures the onFailure callback so
+		// the test can simulate a mid-block recorder death (the same path
+		// MediaRecorder.onerror drives in production).
+		function createFailingRecorder() {
+			const captured: Array<
+				(salvaged: { blob: Blob; duration: number } | null) => void
+			> = [];
+			const mockSession: RecordingSession = {
+				getState: vi.fn().mockReturnValue("recording"),
+				start: vi.fn(),
+				stop: vi.fn().mockResolvedValue({
+					blob: new Blob(["x"], { type: "video/webm" }),
+					duration: 1000,
+				}),
+			};
+			const recorder = {
+				isTypeSupported: vi.fn().mockReturnValue(true),
+				isIOSSafari: vi.fn().mockReturnValue(false),
+				getBestCodec: vi.fn().mockReturnValue("video/webm"),
+				startRecording: vi.fn().mockImplementation(
+					(
+						_stream: MediaStream,
+						opts: {
+							onFailure: (s: { blob: Blob; duration: number } | null) => void;
+						},
+					) => {
+						captured.push(opts.onFailure);
+						return mockSession;
+					},
+				),
+			};
+			return { recorder, captured };
+		}
+
+		it("a readyState dip+recovery does not un-stick the 3-strike park (hook-level)", async () => {
+			const { recorder, captured } = createFailingRecorder();
+			const videoRef = createMockVideoRef(true);
+
+			const { result } = renderHook(() =>
+				useSessionRecorder({
+					videoRef,
+					enabled: true,
+					sessionStorageService: mockStorage,
+					mediaRecorderService: recorder,
+					videoFixService: mockVideoFix,
+					timerService: mockTimer,
+				}),
+			);
+
+			// Initial start (storage inits async, then recording begins).
+			await waitFor(() => expect(result.current.isRecording).toBe(true));
+			expect(recorder.startRecording).toHaveBeenCalledTimes(1);
+
+			// 3 consecutive mid-block deaths. Failures 1 and 2 restart (and
+			// capture a fresh onFailure each time); the 3rd parks in idle.
+			await act(async () => {
+				captured[captured.length - 1](null);
+			});
+			await waitFor(() => expect(result.current.isRecording).toBe(true));
+			expect(recorder.startRecording).toHaveBeenCalledTimes(2);
+
+			await act(async () => {
+				captured[captured.length - 1](null);
+			});
+			await waitFor(() => expect(result.current.isRecording).toBe(true));
+			expect(recorder.startRecording).toHaveBeenCalledTimes(3);
+
+			await act(async () => {
+				captured[captured.length - 1](null);
+			});
+			await waitFor(() => expect(result.current.isRecording).toBe(false));
+			expect(result.current.notRecordingReason).toBe("recorder-error");
+			expect(recorder.startRecording).toHaveBeenCalledTimes(3); // parked, no 4th start
+
+			const startsAfterPark = recorder.startRecording.mock.calls.length;
+			expect(startsAfterPark).toBe(3);
+
+			// readyState dip: the 250ms poll fires videoNotReady().
+			(videoRef.current as unknown as { readyState: number }).readyState = 1;
+			act(() => {
+				mockTimer._triggerAllIntervals();
+			});
+
+			// readyState recovery: the poll fires videoIsReady().
+			(videoRef.current as unknown as { readyState: number }).readyState = 4;
+			act(() => {
+				mockTimer._triggerAllIntervals();
+			});
+
+			// The park must hold: no spurious restart, indicator stays
+			// recorder-error, and no extra MediaRecorder was created.
+			expect(result.current.isRecording).toBe(false);
+			expect(result.current.notRecordingReason).toBe("recorder-error");
+			expect(recorder.startRecording.mock.calls.length).toBe(startsAfterPark);
+		});
+	});
+
 	describe("refreshSessions", () => {
 		it("exposes refreshSessions function", () => {
 			const videoRef = createMockVideoRef(false);
