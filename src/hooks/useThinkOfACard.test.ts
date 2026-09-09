@@ -1,7 +1,12 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HandLandmark } from "../utils/handPose";
-import { FIST, V_SIGN } from "../utils/handPose.fixtures";
+import {
+	buildPixelVHand,
+	FIST,
+	makeNormalizer,
+	V_SIGN,
+} from "../utils/handPose.fixtures";
 import { useThinkOfACard, V_GESTURE_CONFIG } from "./useThinkOfACard";
 
 /**
@@ -43,14 +48,21 @@ describe("useThinkOfACard gesture watcher", () => {
 	const render = (
 		landmarks: HandLandmark[][],
 		gestureEnabled = true,
-	): { landmarksRef: React.RefObject<HandLandmark[][]> } & ReturnType<
+		processingRes?: { width: number; height: number },
+	): {
+		landmarksRef: React.RefObject<HandLandmark[][]>;
+		processingResRef?: { current: { width: number; height: number } };
+	} & ReturnType<
 		typeof renderHook<ReturnType<typeof useThinkOfACard>, unknown>
 	> => {
 		const landmarksRef = { current: landmarks };
+		const processingResRef = processingRes
+			? { current: processingRes }
+			: undefined;
 		const rendered = renderHook(() =>
-			useThinkOfACard({ landmarksRef, gestureEnabled }),
+			useThinkOfACard({ landmarksRef, processingResRef, gestureEnabled }),
 		);
-		return { landmarksRef, ...rendered };
+		return { landmarksRef, processingResRef, ...rendered };
 	};
 
 	/** Run frames for `ms`, landing one final frame at or past the boundary. */
@@ -127,5 +139,58 @@ describe("useThinkOfACard gesture watcher", () => {
 		act(() => result.current.start("key"));
 
 		expect(result.current.state.type).toBe("countdown");
+	});
+
+	/**
+	 * The V-sign spread angle is only tilt-invariant once the per-frame aspect
+	 * ratio is applied (see handPose.aspect.test.ts). These tests prove the
+	 * hook actually plumbs that aspect through to the classifier: an upright
+	 * 20deg V on a 16:9 frame measures ~11deg (rejected) under the square
+	 * default, but ~20deg (accepted) once the real aspect is supplied.
+	 */
+	describe("frame aspect plumbing", () => {
+		// Upright 20deg V, normalized for a 16:9 frame. Without aspect
+		// correction this is the orientation the bug silently rejected.
+		const upright16x9V = buildPixelVHand(20, 0, makeNormalizer(640, 360));
+
+		it("starts a round for an upright 16:9 V once the frame aspect is supplied", () => {
+			const { result } = render([upright16x9V], true, {
+				width: 640,
+				height: 360,
+			});
+
+			expect(result.current.isActive).toBe(false);
+
+			holdFor(V_GESTURE_CONFIG.HOLD_MS);
+
+			expect(result.current.isActive).toBe(true);
+			expect(result.current.state.type).toBe("countdown");
+		});
+
+		it("does NOT start for the same 16:9 V when the aspect is unknown (square default)", () => {
+			// No processingRes -> aspect defaults to 1 -> the upright V
+			// measures ~11deg and is rejected by the 15deg gate. This is the
+			// regression guard: if the hook stopped forwarding the aspect, the
+			// round would silently fail to fire on a non-square production frame.
+			const { result } = render([upright16x9V]);
+
+			holdFor(V_GESTURE_CONFIG.HOLD_MS * 2);
+
+			expect(result.current.isActive).toBe(false);
+		});
+
+		it("does NOT start for a narrow 16:9 point even with the aspect supplied", () => {
+			// A true 6deg two-finger point stays under the 15deg spread gate at
+			// every aspect — the fix must not introduce false positives.
+			const narrow16x9 = buildPixelVHand(6, 0, makeNormalizer(640, 360));
+			const { result } = render([narrow16x9], true, {
+				width: 640,
+				height: 360,
+			});
+
+			holdFor(V_GESTURE_CONFIG.HOLD_MS * 2);
+
+			expect(result.current.isActive).toBe(false);
+		});
 	});
 });

@@ -106,3 +106,83 @@ export const NARROW_SPREAD = makeHand({
 	ring: { state: "curled" },
 	pinky: { state: "curled" },
 });
+
+// ===== Pixel-space hand builder (for aspect-ratio / anisotropy tests) =====
+//
+// The fixtures above live in MediaPipe's normalized [0,1]^2 square space, so
+// they cannot exercise the non-square normalization that production frames
+// actually produce. This builder works the other way: it places a hand in
+// pixel space with a known *physical* V-spread, then applies a per-frame
+// normalizer (x/width, y/height) so the resulting landmarks carry MediaPipe's
+// real per-axis scaling (x per-width, y per-height, z per-width). That lets
+// the V-sign's tilt/aspect invariance be tested directly instead of only in
+// the isotropic square space the existing fixtures provide.
+
+export function makeNormalizer(frameW: number, frameH: number) {
+	return (px: number, py: number): HandLandmark => ({
+		x: px / frameW,
+		y: py / frameH,
+		z: 0,
+	});
+}
+
+const PIXEL_DEG = Math.PI / 180;
+function fingerDir(tiltDeg: number) {
+	const a = tiltDeg * PIXEL_DEG;
+	return { x: Math.sin(a), y: -Math.cos(a) };
+}
+
+interface PixelPoint {
+	x: number;
+	y: number;
+}
+
+/**
+ * Build a 21-landmark hand with a true `spreadDeg` V (index and middle
+ * extended and fanned, ring and pinky curled) rotated to `bisectorDeg`
+ * (0 = fingers pointing up, 90 = pointing right), then normalized by `norm`.
+ */
+export function buildPixelVHand(
+	spreadDeg: number,
+	bisectorDeg: number,
+	norm: (px: number, py: number) => HandLandmark,
+): HandLandmark[] {
+	const half = spreadDeg / 2;
+	const idxDir = fingerDir(bisectorDeg - half);
+	const midDir = fingerDir(bisectorDeg + half);
+	const ringDir = fingerDir(bisectorDeg);
+	const pinkyDir = fingerDir(bisectorDeg);
+	const wrist: PixelPoint = { x: 320, y: 330 };
+	const indexMcp: PixelPoint = { x: 312, y: 318 };
+	const middleMcp: PixelPoint = { x: 332, y: 318 };
+	const ringMcp: PixelPoint = { x: 348, y: 322 };
+	const pinkyMcp: PixelPoint = { x: 360, y: 326 };
+	const L = 70;
+	const ext = (mcp: PixelPoint, dir: { x: number; y: number }) => ({
+		pip: { x: mcp.x + dir.x * 0.45 * L, y: mcp.y + dir.y * 0.45 * L },
+		tip: { x: mcp.x + dir.x * L, y: mcp.y + dir.y * L },
+	});
+	const curl = (mcp: PixelPoint, dir: { x: number; y: number }) => ({
+		pip: { x: mcp.x + dir.x * 0.5 * L, y: mcp.y + dir.y * 0.5 * L },
+		tip: { x: mcp.x + dir.x * 0.15 * L, y: mcp.y + dir.y * 0.15 * L },
+	});
+	const index = ext(indexMcp, idxDir);
+	const middle = ext(middleMcp, midDir);
+	const ring = curl(ringMcp, ringDir);
+	const pinky = curl(pinkyMcp, pinkyDir);
+	const lm: HandLandmark[] = new Array(21).fill(null).map(() => norm(320, 330));
+	lm[0] = norm(wrist.x, wrist.y);
+	lm[5] = norm(indexMcp.x, indexMcp.y);
+	lm[6] = norm(index.pip.x, index.pip.y);
+	lm[8] = norm(index.tip.x, index.tip.y);
+	lm[9] = norm(middleMcp.x, middleMcp.y);
+	lm[10] = norm(middle.pip.x, middle.pip.y);
+	lm[12] = norm(middle.tip.x, middle.tip.y);
+	lm[13] = norm(ringMcp.x, ringMcp.y);
+	lm[14] = norm(ring.pip.x, ring.pip.y);
+	lm[16] = norm(ring.tip.x, ring.tip.y);
+	lm[17] = norm(pinkyMcp.x, pinkyMcp.y);
+	lm[18] = norm(pinky.pip.x, pinky.pip.y);
+	lm[20] = norm(pinky.tip.x, pinky.tip.y);
+	return lm;
+}
