@@ -86,7 +86,7 @@ The hook uses `DeviceService.getStorageItem()` / `DeviceService.setStorageItem()
 
 ### Key Config Values
 
-- `registerType: "autoUpdate"` - Auto-register new service workers
+- `registerType: "prompt"` - Prompt for update; fires `onNeedRefresh` so the SC#4 popup renders and `updateServiceWorker(true)` sends `skipWaiting`
 - `display: "standalone"` - Fullscreen app mode when installed
 - `globPatterns: ["**/*.{js,css,html,ico,png,svg}"]` - Cache all static assets
 - Check interval: 30 minutes automatic, plus manual button

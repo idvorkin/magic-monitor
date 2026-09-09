@@ -224,4 +224,52 @@ describe("SettingsModal", () => {
 			}
 		});
 	});
+
+	describe("updates panel", () => {
+		it("renders the Update Now row when an update is available (SC#4)", () => {
+			render(<SettingsModal {...createDefaultProps({ updateAvailable: true })} />);
+
+			expect(screen.getByText("New version available!")).toBeInTheDocument();
+			expect(screen.getByText("Update Now")).toBeInTheDocument();
+		});
+
+		it("hides the Update Now row when no update is available", () => {
+			render(<SettingsModal {...createDefaultProps({ updateAvailable: false })} />);
+
+			expect(screen.queryByText("New version available!")).not.toBeInTheDocument();
+			expect(screen.queryByText("Update Now")).not.toBeInTheDocument();
+		});
+
+		it("calls onReloadForUpdate when Update Now is clicked", () => {
+			const onReloadForUpdate = vi.fn();
+			render(
+				<SettingsModal
+					{...createDefaultProps({ updateAvailable: true, onReloadForUpdate })}
+				/>,
+			);
+
+			fireEvent.click(screen.getByText("Update Now"));
+
+			expect(onReloadForUpdate).toHaveBeenCalledTimes(1);
+		});
+
+		it("always renders the Check for Update button regardless of updateAvailable (SC#5)", () => {
+			render(<SettingsModal {...createDefaultProps({ updateAvailable: false })} />);
+
+			expect(screen.getByText("Check for Update")).toBeInTheDocument();
+		});
+
+		it("calls onCheckForUpdate when Check for Update is clicked", () => {
+			const onCheckForUpdate = vi.fn();
+			render(
+				<SettingsModal
+					{...createDefaultProps({ onCheckForUpdate })}
+				/>,
+			);
+
+			fireEvent.click(screen.getByText("Check for Update"));
+
+			expect(onCheckForUpdate).toHaveBeenCalledTimes(1);
+		});
+	});
 });

@@ -278,7 +278,7 @@ just deploy   # Test → Build → Deploy to surge.sh
 **PWA Configuration:**
 - Workbox caching via vite-plugin-pwa
 - 15MB max file size cache (for MediaPipe WASM models)
-- Service worker auto-update strategy
+- Service worker prompt-update strategy (shows update notification per SC#4)
 
 ## Design Decisions
 

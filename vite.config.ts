@@ -52,7 +52,15 @@ export default defineConfig({
 		react(),
 		...(useSsl ? [basicSsl()] : []),
 		VitePWA({
-			registerType: "autoUpdate",
+			// Prompt mode (not autoUpdate) so vite-plugin-pwa fires the
+			// `waiting` -> onNeedRefresh path, which sets needRefresh=true
+			// in useRegisterSW. The update-notification UI (VersionNotification
+			// toast and SettingsModal "Update Now" row) is gated on
+			// needRefresh, so prompt mode is required for the popup to render
+			// (spec SC#4). It also avoids an unprompted window.location.reload()
+			// on every SW activation, which under autoUpdate can truncate an
+			// in-flight recording block. See docs/PWA_ENABLEMENT_SPEC.md.
+			registerType: "prompt",
 			includeAssets: ["favicon.ico", "mediapipe/**/*", "models/**/*"],
 			manifest: {
 				name: "Magic Monitor",
