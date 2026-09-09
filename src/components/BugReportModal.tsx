@@ -103,7 +103,11 @@ export function BugReportModal({
 		// Small delay to let modal close animation complete
 		await new Promise((resolve) => setTimeout(resolve, 150));
 		const dataUrl = await DeviceService.captureScreenshot();
-		setScreenshot(dataUrl);
+		// Only update screenshot when capture produced a frame; preserve the
+		// existing screenshot when the user cancels the picker (or capture fails).
+		if (dataUrl !== null) {
+			setScreenshot(dataUrl);
+		}
 		setIsCapturing(false);
 		// Reopen modal - isCapturingRef will prevent form reset
 		onOpen();
