@@ -1,3 +1,4 @@
+import { HandLandmarker } from "@mediapipe/tasks-vision";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HandLandmarkerService } from "./HandLandmarkerService";
 
@@ -211,6 +212,41 @@ describe("HandLandmarkerService", () => {
 		// Retry should work
 		await HandLandmarkerService.load();
 		expect(HandLandmarkerService.isReady()).toBe(true);
+	});
+
+	it("selects the CPU delegate when no WebGL context is available", async () => {
+		const getContextSpy = vi
+			.spyOn(HTMLCanvasElement.prototype, "getContext")
+			.mockReturnValue(null);
+		try {
+			await HandLandmarkerService.load();
+
+			const createOptions = vi.mocked(HandLandmarker.createFromOptions).mock
+				.calls[0][1];
+			expect(createOptions.baseOptions?.delegate).toBe("CPU");
+			expect(HandLandmarkerService.isReady()).toBe(true);
+		} finally {
+			getContextSpy.mockRestore();
+		}
+	});
+
+	it("selects the GPU delegate when WebGL is available", async () => {
+		const fakeContext = {
+			getParameter: vi.fn().mockReturnValue("WebGL 2.0 (OpenGL ES 3.0)"),
+		};
+		const getContextSpy = vi
+			.spyOn(HTMLCanvasElement.prototype, "getContext")
+			.mockReturnValue(fakeContext as unknown as CanvasRenderingContext2D);
+		try {
+			await HandLandmarkerService.load();
+
+			const createOptions = vi.mocked(HandLandmarker.createFromOptions).mock
+				.calls[0][1];
+			expect(createOptions.baseOptions?.delegate).toBe("GPU");
+			expect(HandLandmarkerService.isReady()).toBe(true);
+		} finally {
+			getContextSpy.mockRestore();
+		}
 	});
 
 	it("getModel returns null before loading", () => {

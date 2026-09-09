@@ -25,27 +25,25 @@ const loader = createModelLoader<HandLandmarker>({
 		// Download complete, now initializing model
 		setPhase("initializing");
 
-		// Create HandLandmarker with GPU delegate specified during creation
+		const canvas = document.createElement("canvas");
+		const gl = canvas.getContext("webgl2") || canvas.getContext("webgl");
+		const delegate: "GPU" | "CPU" = gl ? "GPU" : "CPU";
 		console.log(
-			"[HandLandmarkerService] Creating HandLandmarker with GPU delegate...",
+			"[HandLandmarkerService] WebGL available:",
+			!!gl,
+			gl ? `(${gl.getParameter(gl.VERSION)})` : "— using CPU delegate",
+		);
+		console.log(
+			`[HandLandmarkerService] Creating HandLandmarker with ${delegate} delegate...`,
 		);
 		const model = await HandLandmarker.createFromOptions(vision, {
 			baseOptions: {
 				modelAssetBuffer: modelBuffer,
-				delegate: "GPU",
+				delegate,
 			},
 			runningMode: "VIDEO",
 			numHands: 2,
 		});
-
-		// Log WebGL availability for GPU delegate diagnostics
-		const canvas = document.createElement("canvas");
-		const gl = canvas.getContext("webgl2") || canvas.getContext("webgl");
-		console.log(
-			"[HandLandmarkerService] WebGL available:",
-			!!gl,
-			gl ? `(${gl.getParameter(gl.VERSION)})` : "",
-		);
 		console.log(
 			"[HandLandmarkerService] HandLandmarker initialized successfully",
 		);

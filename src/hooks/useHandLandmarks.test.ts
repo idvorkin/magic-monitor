@@ -250,6 +250,24 @@ describe("useHandLandmarks", () => {
 		// A restarted loop would have re-detected the frame it already saw.
 		expect(mockDetectForVideo).toHaveBeenCalledTimes(2);
 	});
+
+	it("keeps the rAF loop alive when detectForVideo throws", async () => {
+		const { result } = await renderLoaded();
+		mockDetectForVideo.mockClear();
+
+		mockDetectForVideo.mockImplementation(() => {
+			throw new Error(
+				"Failed to obtain WebGL context from the provided canvas.",
+			);
+		});
+		advanceFrame();
+
+		mockDetectForVideo.mockReturnValue({ landmarks: [HAND] });
+		advanceFrame();
+
+		expect(mockDetectForVideo).toHaveBeenCalledTimes(2);
+		expect(result.current.landmarksRef.current).toEqual([HAND]);
+	});
 });
 
 describe("computeProcessingDimensions", () => {

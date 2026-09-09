@@ -126,13 +126,19 @@ export function useHandLandmarks({
 				}
 
 				const startTimeMs = performance.now();
-				const result = landmarker.detectForVideo(
-					detectInput as unknown as HTMLVideoElement,
-					startTimeMs,
-				);
+				let landmarks: HandLandmark[][];
+				try {
+					const result = landmarker.detectForVideo(
+						detectInput as unknown as HTMLVideoElement,
+						startTimeMs,
+					);
+					landmarks = result?.landmarks ?? [];
+				} catch (err) {
+					console.error("[useHandLandmarks] detectForVideo threw:", err);
+					landmarks = [];
+				}
 				detectTimeMsRef.current = performance.now() - startTimeMs;
 
-				const landmarks = result?.landmarks ?? [];
 				landmarksRef.current = landmarks;
 				onDetectRef.current?.(landmarks, video);
 			}
