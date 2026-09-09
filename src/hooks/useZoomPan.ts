@@ -64,12 +64,14 @@ export function useZoomPan({
 
 	const setZoom = useCallback(
 		(newZoom: number) => {
+			// Notify that manual zoom is happening (so caller can disable smart zoom)
+			onZoomChange?.();
 			const clampedZoom = Math.min(Math.max(newZoom, minZoom), maxZoom);
 			setZoomInternal(clampedZoom);
 			// Re-clamp pan with new zoom level
 			setPanInternal((prev) => clampPan(prev, clampedZoom));
 		},
-		[minZoom, maxZoom, clampPan],
+		[onZoomChange, minZoom, maxZoom, clampPan],
 	);
 
 	const setPan = useCallback(
