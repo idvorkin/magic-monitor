@@ -286,6 +286,46 @@ describe("useSessionRecorder", () => {
 		});
 	});
 
+	describe("transient init failure recovery", () => {
+		it("recovers recording after a transient storage init failure followed by a successful refresh", async () => {
+			mockStorage.init.mockRejectedValue(new Error("Storage unavailable"));
+			const videoRef = createMockVideoRef(true);
+
+			const { result } = renderHook(() =>
+				useSessionRecorder({
+					videoRef,
+					enabled: true,
+					sessionStorageService: mockStorage,
+					mediaRecorderService: mockRecorder,
+					videoFixService: mockVideoFix,
+					timerService: mockTimer,
+				}),
+			);
+
+			// The init failure locks the recorder out and shows an error.
+			await waitFor(() => {
+				expect(result.current.notRecordingReason).toBe("storage-error");
+			});
+			expect(result.current.error).toBe("Storage unavailable - recording disabled");
+			expect(result.current.isRecording).toBe(false);
+
+			// The init effect won't re-run (its dependency is the stable storage
+			// singleton), so simulate the UI calling refreshSessions (e.g. via
+			// SessionPicker.onRefresh); the mock storage now responds OK.
+			await act(async () => {
+				await result.current.refreshSessions();
+			});
+
+			// Storage is proven working: the machine leaves the storage-error
+			// lockout, the error clears, and recording starts.
+			await waitFor(() => {
+				expect(result.current.isRecording).toBe(true);
+			});
+			expect(result.current.notRecordingReason).toBeNull();
+			expect(result.current.error).toBeNull();
+		});
+	});
+
 	describe("camera switch (H4)", () => {
 		it("stops and saves the current block when the video stream changes (H4)", async () => {
 			const videoRef = createMockVideoRef(true);

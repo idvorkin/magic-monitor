@@ -301,4 +301,102 @@ describe("useSessionList", () => {
 
 		expect(mockStorage.pruneOldSessions).toHaveBeenCalled();
 	});
+
+	describe("transient init failure recovery", () => {
+		it("reconciles initFailed and isInitialized when refreshSessions succeeds after an init failure", async () => {
+			mockStorage.init.mockRejectedValue(new Error("Storage unavailable"));
+			const { result } = renderHook(() =>
+				useSessionList({
+					sessionStorageService: mockStorage,
+					videoFixService: mockVideoFix,
+				}),
+			);
+
+			// Wait for the init failure to latch the failure state.
+			await waitFor(() => {
+				expect(result.current.initFailed).toBe(true);
+			});
+			expect(result.current.isInitialized).toBe(false);
+			expect(result.current.error).toBe("Storage unavailable - recording disabled");
+
+			// A later refresh proves storage is actually reachable (e.g. a
+			// transient IndexedDB open failure has cleared).
+			await act(async () => {
+				await result.current.refreshSessions();
+			});
+
+			// All three storage-state flags must reconcile to "storage OK".
+			expect(result.current.initFailed).toBe(false);
+			expect(result.current.isInitialized).toBe(true);
+			expect(result.current.error).toBeNull();
+		});
+
+		it("leaves storage flags reconciled after a refresh following a normal init", async () => {
+			const { result } = renderHook(() =>
+				useSessionList({
+					sessionStorageService: mockStorage,
+					videoFixService: mockVideoFix,
+				}),
+			);
+
+			await waitFor(() => expect(result.current.isInitialized).toBe(true));
+			expect(result.current.initFailed).toBe(false);
+			expect(result.current.error).toBeNull();
+
+			await act(async () => {
+				await result.current.refreshSessions();
+			});
+
+			// Already initialized: refresh is a no-op on the flags.
+			expect(result.current.isInitialized).toBe(true);
+			expect(result.current.initFailed).toBe(false);
+			expect(result.current.error).toBeNull();
+			expect(mockStorage.getRecentSessions).toHaveBeenCalledTimes(2);
+		});
+
+		it("does not re-latch initFailed when refreshSessions fails after a successful init", async () => {
+			const { result } = renderHook(() =>
+				useSessionList({
+					sessionStorageService: mockStorage,
+					videoFixService: mockVideoFix,
+				}),
+			);
+
+			await waitFor(() => expect(result.current.isInitialized).toBe(true));
+
+			// A transient refresh error is not storage death (M8).
+			mockStorage.getRecentSessions.mockRejectedValueOnce(new Error("tx aborted"));
+
+			await act(async () => {
+				await result.current.refreshSessions();
+			});
+
+			expect(result.current.error).toBe("Failed to load sessions");
+			expect(result.current.initFailed).toBe(false);
+			expect(result.current.isInitialized).toBe(true);
+		});
+
+		it("stays locked out when refreshSessions also fails after an init failure", async () => {
+			mockStorage.init.mockRejectedValue(new Error("Storage unavailable"));
+			const { result } = renderHook(() =>
+				useSessionList({
+					sessionStorageService: mockStorage,
+					videoFixService: mockVideoFix,
+				}),
+			);
+
+			await waitFor(() => expect(result.current.initFailed).toBe(true));
+
+			mockStorage.getRecentSessions.mockRejectedValueOnce(new Error("still broken"));
+
+			await act(async () => {
+				await result.current.refreshSessions();
+			});
+
+			// Storage is genuinely still unavailable: no false recovery.
+			expect(result.current.initFailed).toBe(true);
+			expect(result.current.isInitialized).toBe(false);
+			expect(result.current.error).toBe("Failed to load sessions");
+		});
+	});
 });
