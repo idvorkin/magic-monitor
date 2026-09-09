@@ -279,6 +279,93 @@ describe("useSmartZoom", () => {
 		expect(result.current.zoom).toBeCloseTo(2.0, 0.5);
 	});
 
+	// Regression for the SmartZoom Kalman open-loop defect: with Kalman
+	// presets the smoother's velocity estimate could race ahead of the
+	// speed-clamped display position, so the first frame after a target
+	// reversal (hands disappear) moved zoom in the WRONG direction (away
+	// from 1) by the per-frame clamp allowance before reversing. The fix
+	// re-seeds the smoother to the displayed position after each clamp
+	// (Smoother.reseed). See the bug report for full details.
+	it("kalmanFast does not move zoom away from target when hands disappear (reseed closes the loop)", async () => {
+		// Use a STABLE videoRef object (not an inline literal): a new
+		// `{ current: videoElement }` on every render would change the
+		// `useHandLandmarks` effect dep and re-run the detection loop on each
+		// throttled setZoom re-render, producing spurious double detections.
+		// A stable ref gives exactly one detection per advanceFrame.
+		const stableVideoRef = { current: videoElement };
+		const { result } = renderHook(() =>
+			useSmartZoom({
+				videoRef: stableVideoRef,
+				enabled: true,
+				// KALMAN_FAST is the preset that reproduces the open-loop defect.
+				smoothingPreset: "kalmanFast",
+			}),
+		);
+
+		// Flush model load fully so the detection loop is active before we
+		// drive it. Loop on isModelLoading so we are robust to the number of
+		// microtasks the (mocked) fetch + HandLandmarker chain needs.
+		for (let i = 0; i < 20 && result.current.isModelLoading; i++) {
+			await act(async () => {
+				await Promise.resolve();
+			});
+		}
+		expect(result.current.isModelLoading).toBe(false);
+
+		// Box width 0.1 -> target = 1 / (0.1 * padding 2.0) = 5 -> clamped to
+		// MAX_ZOOM (3). Centered so pan stays at 0 and isolates the zoom axis.
+		const handsLandmarks = [
+			[
+				{ x: 0.45, y: 0.45, z: 0 },
+				{ x: 0.55, y: 0.55, z: 0 },
+			],
+		];
+		mockDetectForVideo.mockReturnValue({ landmarks: handsLandmarks });
+
+		// Short hands phase: keeps the Kalman velocity estimate nonzero so
+		// the open-loop path would race ahead of the display. 7 frames ramps
+		// the displayed zoom by the +0.1/frame clamp (1.0 -> ~1.7).
+		const HANDS_FRAMES = 7;
+		const zoomSeq: number[] = [];
+		for (let i = 0; i < HANDS_FRAMES; i++) {
+			advanceFrame();
+			zoomSeq.push(result.current.zoomRef.current);
+		}
+		const lastHandsZoom = zoomSeq[zoomSeq.length - 1];
+
+		// Sanity: the hands phase actually ramped zoom up.
+		expect(lastHandsZoom).toBeGreaterThan(1.0 + 1e-9);
+
+		// Release the hands: committed target becomes 1.
+		mockDetectForVideo.mockReturnValue({ landmarks: [] });
+
+		const NOHAND_FRAMES = 8;
+		const noHandZoom: number[] = [];
+		for (let i = 0; i < NOHAND_FRAMES; i++) {
+			advanceFrame();
+			noHandZoom.push(result.current.zoomRef.current);
+		}
+
+		// Guarantee 1: the first no-hands frame moves TOWARD the target (1),
+		// i.e. strictly below the zoom at release. On the open-loop bug this
+		// was (releaseZoom + 0.05) -- a wrong-direction bump.
+		expect(noHandZoom[0]).toBeLessThan(lastHandsZoom - 1e-9);
+
+		// Guarantee 2: the no-hands zoom sequence is monotonically
+		// non-increasing -- no wrong-direction bump anywhere in the return.
+		for (let i = 1; i < noHandZoom.length; i++) {
+			expect(noHandZoom[i]).toBeLessThanOrEqual(noHandZoom[i - 1] + 1e-9);
+		}
+
+		// Guarantee 3: the per-frame step never exceeds the no-hands zoom
+		// clamp (DEFAULT_SPEED_CLAMP.maxZoomSpeed * 0.5 = 0.05), so the fix
+		// corrected the DIRECTION of motion, not the clamp magnitude.
+		for (let i = 0; i < noHandZoom.length; i++) {
+			const prev = i === 0 ? lastHandsZoom : noHandZoom[i - 1];
+			expect(prev - noHandZoom[i]).toBeLessThanOrEqual(0.05 + 1e-9);
+		}
+	});
+
 	it("should return normalized pan values (0-1 range)", async () => {
 		const { result } = renderHook(() =>
 			useSmartZoom({

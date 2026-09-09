@@ -7,6 +7,7 @@ import {
 	KalmanSmoother,
 	kalmanPredict,
 } from "./kalman";
+import type { SmoothedPosition } from "./types";
 
 describe("EmaSmoother", () => {
 	it("should start at default position", () => {
@@ -267,5 +268,169 @@ describe("clampSpeed", () => {
 		// Total distance should be maxPanSpeed
 		const dist = Math.sqrt(result.x ** 2 + result.y ** 2);
 		expect(dist).toBeCloseTo(0.1, 5);
+	});
+});
+
+// `Smoother.reseed` closes the loop between `clampSpeed` and the smoother's
+// internal state. See the Smoother interface doc and the bug report on
+// wrong-direction frames at target reversal.
+describe("Smoother.reseed", () => {
+	it("KalmanSmoother.reseed sets the position to the seeded value", () => {
+		const smoother = new KalmanSmoother(KALMAN_FAST);
+		smoother.reseed({ x: 0.3, y: -0.2, zoom: 2.5 });
+
+		const pos = smoother.getPosition();
+		expect(pos.x).toBeCloseTo(0.3, 5);
+		expect(pos.y).toBeCloseTo(-0.2, 5);
+		expect(pos.zoom).toBeCloseTo(2.5, 5);
+	});
+
+	it("KalmanSmoother.reseed zeroes the velocity estimate", () => {
+		// Build up velocity by tracking a moving target.
+		const smoother = new KalmanSmoother(KALMAN_FAST);
+		for (let i = 0; i < 20; i++) {
+			smoother.update({ x: 1, y: 1, zoom: 3 });
+		}
+		const before = smoother.getVelocities();
+		// Sanity: the filter should have built up meaningful zoom velocity.
+		expect(Math.abs(before.vZoom)).toBeGreaterThan(0);
+
+		smoother.reseed({ x: 0, y: 0, zoom: 1.7 });
+
+		const after = smoother.getVelocities();
+		expect(after.vx).toBe(0);
+		expect(after.vy).toBe(0);
+		expect(after.vZoom).toBe(0);
+	});
+
+	it("KalmanSmoother: after reseed, first update does not race past the seeded position", () => {
+		// Without velocity reset, a Kalman filter that has been tracking a
+		// rising target will predict forward past a freshly seeded position.
+		// After reseed the velocity is 0, so the predicted next position is
+		// exactly the seeded position (plus a fraction of the innovation).
+		const smoother = new KalmanSmoother(KALMAN_FAST);
+		for (let i = 0; i < 20; i++) {
+			smoother.update({ x: 0, y: 0, zoom: 3 });
+		}
+		smoother.reseed({ x: 0, y: 0, zoom: 1.7 });
+
+		const out = smoother.update({ x: 0, y: 0, zoom: 1 });
+
+		// Target is below the seeded position; output must move toward the
+		// target (i.e. be <= 1.7), never above it.
+		expect(out.zoom).toBeLessThanOrEqual(1.7 + 1e-9);
+		expect(out.zoom).toBeLessThan(1.7);
+	});
+
+	it("EmaSmoother.reseed sets the internal state to the seeded value", () => {
+		const smoother = new EmaSmoother({ smoothFactor: 0.05 });
+		smoother.update({ x: 1, y: 1, zoom: 3 });
+		smoother.reseed({ x: 0.3, y: -0.2, zoom: 2.5 });
+
+		const pos = smoother.getPosition();
+		expect(pos.x).toBeCloseTo(0.3, 5);
+		expect(pos.y).toBeCloseTo(-0.2, 5);
+		expect(pos.zoom).toBeCloseTo(2.5, 5);
+	});
+
+	it("EmaSmoother: after reseed, the next update lerps from the seeded position", () => {
+		const smoother = new EmaSmoother({ smoothFactor: 0.5 });
+		smoother.reseed({ x: 0, y: 0, zoom: 1 });
+
+		// smoothFactor 0.5 from zoom 1 toward target 3 -> 1 + 0.5*(3-1) = 2.0
+		const out = smoother.update({ x: 0, y: 0, zoom: 3 });
+		expect(out.zoom).toBeCloseTo(2.0, 5);
+	});
+
+	it("createSmoother returns smoothers that implement reseed", () => {
+		for (const preset of ["ema", "kalmanFast", "kalmanSmooth"] as const) {
+			const smoother = createSmoother(preset);
+			smoother.reseed({ x: 0.1, y: -0.1, zoom: 1.2 });
+			const pos = smoother.getPosition();
+			expect(pos.x).toBeCloseTo(0.1, 5);
+			expect(pos.y).toBeCloseTo(-0.1, 5);
+			expect(pos.zoom).toBeCloseTo(1.2, 5);
+		}
+	});
+});
+
+// Integration of clampSpeed + Smoother, mirroring the useSmartZoom frame
+// loop. Guards the closed-loop behavior that prevents wrong-direction frames
+// at target reversal.
+describe("clampSpeed + Smoother closed loop (useSmartZoom frame pipeline)", () => {
+	// Per-frame speed limits used by useSmartZoom (DEFAULT_SPEED_CLAMP).
+	const HANDS_PAN = 0.05;
+	const HANDS_ZOOM = 0.1;
+	const NOHAND_PAN = 0.025; // half speed on no-hands
+	const NOHAND_ZOOM = 0.05;
+
+	// Drive the pipeline the way useSmartZoom does: each frame run the
+	// smoother on the committed target, clamp toward the displayed
+	// position, update the displayed position, and (when closed) reseed
+	// the smoother to the displayed position.
+	function runPipeline(
+		smoother: ReturnType<typeof createSmoother>,
+		handsFrames: number,
+		closedLoop: boolean,
+	): { phase: "HANDS" | "NOHEAD"; prevBefore: number; out: number }[] {
+		let prev: SmoothedPosition = { x: 0, y: 0, zoom: 1 };
+		const trace: {
+			phase: "HANDS" | "NOHEAD";
+			prevBefore: number;
+			out: number;
+		}[] = [];
+
+		for (let i = 0; i < handsFrames; i++) {
+			const smoothed = smoother.update({ x: 0, y: 0, zoom: 3 });
+			const sc = clampSpeed(prev, smoothed, HANDS_PAN, HANDS_ZOOM);
+			trace.push({ phase: "HANDS", prevBefore: prev.zoom, out: sc.zoom });
+			prev = { x: 0, y: 0, zoom: sc.zoom };
+			if (closedLoop) smoother.reseed(prev);
+		}
+		for (let i = 0; i < 6; i++) {
+			const smoothed = smoother.update({ x: 0, y: 0, zoom: 1 });
+			const sc = clampSpeed(prev, smoothed, NOHAND_PAN, NOHAND_ZOOM);
+			trace.push({ phase: "NOHEAD", prevBefore: prev.zoom, out: sc.zoom });
+			prev = { x: 0, y: 0, zoom: sc.zoom };
+			if (closedLoop) smoother.reseed(prev);
+		}
+		return trace;
+	}
+
+	// A "wrong-direction" frame is a no-hands frame where the displayed
+	// zoom moves *away* from the new target (1) — i.e. out > prevBefore.
+	function countWrongDirection(trace: ReturnType<typeof runPipeline>): number {
+		return trace
+			.filter((t) => t.phase === "NOHEAD")
+			.filter((t) => t.out > t.prevBefore + 1e-9).length;
+	}
+
+	it("closed-loop KALMAN_FAST produces zero wrong-direction frames across the trigger range N=1..12", () => {
+		for (let n = 1; n <= 12; n++) {
+			const trace = runPipeline(new KalmanSmoother(KALMAN_FAST), n, true);
+			expect(countWrongDirection(trace)).toBe(0);
+		}
+	});
+
+	it("closed-loop KALMAN_SMOOTH produces zero wrong-direction frames across the trigger range N=1..16", () => {
+		for (let n = 1; n <= 16; n++) {
+			const trace = runPipeline(new KalmanSmoother(KALMAN_SMOOTH), n, true);
+			expect(countWrongDirection(trace)).toBe(0);
+		}
+	});
+
+	it("EMA is unaffected by the loop (no wrong-direction frames either way)", () => {
+		// EMA's per-frame climb (0.05 * (3-1) = 0.1) never exceeds the 0.1
+		// zoom clamp, so its output never sits above prev.zoom at reversal.
+		expect(
+			countWrongDirection(
+				runPipeline(new EmaSmoother({ smoothFactor: 0.05 }), 7, false),
+			),
+		).toBe(0);
+		expect(
+			countWrongDirection(
+				runPipeline(new EmaSmoother({ smoothFactor: 0.05 }), 7, true),
+			),
+		).toBe(0);
 	});
 });

@@ -42,6 +42,11 @@ export class EmaSmoother implements Smoother {
 	reset(): void {
 		this.state = { x: 0, y: 0, zoom: 1 };
 	}
+
+	/** Re-seed internal state to the displayed position (closes the clamp<->smoother loop). */
+	reseed(pos: SmoothedPosition): void {
+		this.state = { x: pos.x, y: pos.y, zoom: pos.zoom };
+	}
 }
 
 /** Pure function version for testing */

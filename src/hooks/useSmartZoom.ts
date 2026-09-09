@@ -263,6 +263,9 @@ export function useSmartZoom({
 					zoom: speedClamped.zoom,
 				};
 
+				// Close the clamp<->smoother loop: prevents wrong-direction frames on target reversal.
+				smootherRef.current.reseed(prevPositionRef.current);
+
 				// Record debug trace entry (pan values are now normalized)
 				frameCountRef.current++;
 				const traceEntry: DebugTraceEntry = {
@@ -333,6 +336,9 @@ export function useSmartZoom({
 					y: clampedPan.y,
 					zoom: speedClamped.zoom,
 				};
+
+				// Close the clamp<->smoother loop (see hands branch comment).
+				smootherRef.current.reseed(prevPositionRef.current);
 
 				// Record debug trace entry (no hands, pan values are normalized)
 				frameCountRef.current++;
