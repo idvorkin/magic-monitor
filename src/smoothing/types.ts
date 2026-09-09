@@ -35,6 +35,9 @@ export interface Smoother {
 	/** Get current smoothed position without updating */
 	getPosition(): SmoothedPosition;
 
+	/** Re-seed internal state to the displayed position (closes the clamp<->smoother loop). */
+	reseed(pos: SmoothedPosition): void;
+
 	/** Reset to initial state */
 	reset(): void;
 }

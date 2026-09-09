@@ -163,6 +163,13 @@ export class KalmanSmoother implements Smoother {
 		this.filterZoom.reset(1);
 	}
 
+	/** Re-seed internal state to the displayed position (closes the clamp<->smoother loop). */
+	reseed(pos: SmoothedPosition): void {
+		this.filterX.reset(pos.x);
+		this.filterY.reset(pos.y);
+		this.filterZoom.reset(pos.zoom);
+	}
+
 	/** Get current velocities (useful for debugging/visualization) */
 	getVelocities(): { vx: number; vy: number; vZoom: number } {
 		return {
