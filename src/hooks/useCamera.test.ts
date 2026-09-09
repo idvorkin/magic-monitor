@@ -749,4 +749,107 @@ describe("useCamera", () => {
 			expect(result.current.orientation).toBe("portrait");
 		});
 	});
+
+	describe("pre-adoption settings persistence", () => {
+		it("persists a resolution change made during the pre-adoption window under the real device id", async () => {
+			const devices = [createMockDevice("device-1", "Camera 1")];
+
+			// Defer the FIRST start call (simulates a pending permission prompt:
+			// the desktop getUserMedia banner is non-blocking, so the Settings
+			// UI stays interactive while selectedDeviceId is still "").
+			let resolveFirstStart!: (s: MediaStream) => void;
+			const firstStartPromise = new Promise<MediaStream>((r) => {
+				resolveFirstStart = r;
+			});
+
+			let callCount = 0;
+			vi.mocked(CameraService.start).mockImplementation(() => {
+				callCount++;
+				if (callCount === 1) return firstStartPromise; // first run: "waiting for permission"
+				return Promise.resolve(createMockStream("device-1")); // second run (effect re-run after setResolution): immediate
+			});
+
+			vi.mocked(CameraService.getVideoDevices).mockResolvedValue(devices);
+
+			const { result } = renderHook(() => useCamera()); // no arg => selectedDeviceId = ""
+
+			expect(result.current.selectedDeviceId).toBe("");
+
+			// User changes resolution WHILE the first start is still pending.
+			act(() => {
+				result.current.setResolution("1080p");
+			});
+
+			// Grant permission — resolve the first (cancelled) start.
+			await act(async () => {
+				resolveFirstStart(createMockStream("device-1"));
+			});
+
+			await waitFor(() => {
+				expect(result.current.selectedDeviceId).toBe("device-1");
+			});
+
+			// The pre-adoption 1080p choice must be persisted under device-1.
+			const settingsCalls = vi
+				.mocked(DeviceService.setStorageItem)
+				.mock.calls.filter(
+					([key]) => key === "magic-monitor-camera-device-settings",
+				);
+			const hasDevice1With1080p = settingsCalls.some(([, value]) => {
+				try {
+					return (
+						JSON.parse(value as string)["device-1"]?.resolution === "1080p"
+					);
+				} catch {
+					return false;
+				}
+			});
+
+			expect(hasDevice1With1080p).toBe(true);
+			expect(result.current.resolution).toBe("1080p");
+		});
+
+		it("does not clobber an existing per-device entry on adoption (returning device)", async () => {
+			// A returning device whose persisted id was cleared (e.g. by an
+			// OverconstrainedError recovery) still has a settings entry in
+			// storage. selectedDeviceId re-initializes to "", so adoption runs,
+			// but the previously-saved preference must win over the transient
+			// in-memory defaults.
+			vi.mocked(DeviceService.getStorageItem).mockImplementation(
+				(key: string) => {
+					if (key === "magic-monitor-camera-device-settings") {
+						return JSON.stringify({
+							"device-1": { resolution: "720p", orientation: "portrait" },
+						});
+					}
+					return null; // device-id cleared
+				},
+			);
+			vi.mocked(CameraService.getVideoDevices).mockResolvedValue([
+				createMockDevice("device-1", "Camera 1"),
+			]);
+			vi.mocked(CameraService.start).mockResolvedValue(
+				createMockStream("device-1"),
+			);
+
+			const { result } = renderHook(() => useCamera());
+
+			await waitFor(() => {
+				expect(result.current.selectedDeviceId).toBe("device-1");
+			});
+			// Adoption still persists the real device id.
+			expect(DeviceService.setStorageItem).toHaveBeenCalledWith(
+				"magic-monitor-camera-device-id",
+				"device-1",
+			);
+			// But the existing 720p/portrait entry must NOT be overwritten by the
+			// in-memory defaults (4k/landscape) — no device-settings write at all.
+			const settingsWrites = vi
+				.mocked(DeviceService.setStorageItem)
+				.mock.calls.filter(
+					([key]) => key === "magic-monitor-camera-device-settings",
+				);
+			expect(settingsWrites).toHaveLength(0);
+		});
+	});
 });

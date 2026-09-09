@@ -201,6 +201,24 @@ export function useCamera(initialDeviceId?: string) {
 					if (trackDeviceId) {
 						// Only a device the browser actually opened gets persisted
 						DeviceService.setStorageItem(DEVICE_ID_STORAGE_KEY, trackDeviceId);
+						// Back-fill in-memory settings under the real device id. The
+						// user may have changed resolution/orientation during the
+						// pre-permission window (desktop), when selectedDeviceId was
+						// still "" — updateSettingForDevice silently no-ops on an
+						// empty id, so without this back-fill the choice would be
+						// lost on reload. Only write when no entry exists yet, so
+						// a returning device whose persisted id was cleared (e.g.
+						// by an OverconstrainedError recovery) keeps its
+						// previously-saved preference instead of being clobbered by
+						// transient state. (getSettingsForDevice always returns an
+						// object — defaults when absent — so getAllDeviceSettings
+						// is used for the existence check.)
+						if (!CameraSettingsService.getAllDeviceSettings()[displayId]) {
+							CameraSettingsService.saveSettingsForDevice(displayId, {
+								resolution,
+								orientation,
+							});
+						}
 					}
 				}
 			} catch (err) {
