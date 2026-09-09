@@ -2,6 +2,7 @@ import {
 	buildCrashReportBody,
 	buildGitHubIssueUrl,
 	getMetadata,
+	sanitizeGitUrl,
 } from "../utils/bugReportFormatters";
 import { GIT_COMMIT_URL, GIT_SHA_SHORT } from "../version";
 
@@ -17,7 +18,7 @@ export function CrashFallback({ error }: { error: Error }) {
 			getDevicePixelRatio: () => window.devicePixelRatio,
 			getDeviceMemoryGB: () =>
 				"deviceMemory" in navigator
-					? (navigator as { deviceMemory?: number }).deviceMemory ?? null
+					? ((navigator as { deviceMemory?: number }).deviceMemory ?? null)
 					: null,
 			getHardwareConcurrency: () => navigator.hardwareConcurrency ?? null,
 			isOnline: () => navigator.onLine,
@@ -82,7 +83,7 @@ export function CrashFallback({ error }: { error: Error }) {
 				<p className="mt-4 text-sm text-gray-500">
 					Build:{" "}
 					<a
-						href={GIT_COMMIT_URL}
+						href={sanitizeGitUrl(GIT_COMMIT_URL)}
 						target="_blank"
 						rel="noopener noreferrer"
 						className="text-blue-400 hover:underline"

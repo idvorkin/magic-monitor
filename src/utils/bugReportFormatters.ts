@@ -6,8 +6,16 @@ import type {
 } from "../types/bugReport";
 import { GIT_COMMIT_URL, GIT_SHA_SHORT } from "../version";
 
+/**
+ * Strip embedded HTTP userinfo (user:password@) from a URL.
+ * Defense-in-depth for generate-version.sh which already strips at build time.
+ */
+export function sanitizeGitUrl(url: string): string {
+	return url.replace(/:\/\/[^/@]*@/, "://");
+}
+
 export function formatBuildLink(): string {
-	return `[${GIT_SHA_SHORT}](${GIT_COMMIT_URL})`;
+	return `[${GIT_SHA_SHORT}](${sanitizeGitUrl(GIT_COMMIT_URL)})`;
 }
 
 export function formatDate(date: Date = new Date()): string {
@@ -143,7 +151,9 @@ export function getMediaRecorderInfo(): MediaRecorderInfo {
 			"video/mp4",
 		];
 		const supportedCodecs = available
-			? codecsToTest.filter((codec) => MediaRecorderService.isTypeSupported(codec))
+			? codecsToTest.filter((codec) =>
+					MediaRecorderService.isTypeSupported(codec),
+				)
 			: [];
 
 		return {

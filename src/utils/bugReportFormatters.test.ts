@@ -1,13 +1,39 @@
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+
+// Mutable mock for ../version — using getters so tests can change values
+// per-test to verify credential stripping in formatBuildLink / buildCrashReportBody.
+const versionMock = vi.hoisted(() => ({
+	gitCommitUrl: "https://github.com/test/repo/commit/abcdef1234567890",
+	gitShaShort: "abcdef1",
+}));
+
+vi.mock("../version", () => ({
+	get GIT_COMMIT_URL() {
+		return versionMock.gitCommitUrl;
+	},
+	get GIT_SHA_SHORT() {
+		return versionMock.gitShaShort;
+	},
+	GIT_SHA: "abcdef1234567890abcdef1234567890abcdef12",
+	GIT_CURRENT_URL: "https://github.com/test/repo/tree/main",
+	GIT_BRANCH: "main",
+	BUILD_TIMESTAMP: "2025-11-30T00:00:00Z",
+}));
+
 import {
+	buildCrashReportBody,
 	buildDefaultDescription,
 	buildDefaultTitle,
 	buildGitHubIssueUrl,
 	buildIssueBody,
+	formatBuildLink,
 	formatDate,
 	getMediaRecorderInfo,
 	getMetadata,
+	sanitizeGitUrl,
 } from "./bugReportFormatters";
+
+const CLEAN_COMMIT_URL = "https://github.com/test/repo/commit/abcdef1234567890";
 
 describe("formatDate", () => {
 	it("formats date in US locale", () => {
@@ -317,6 +343,214 @@ describe("getMediaRecorderInfo", () => {
 
 		// Cleanup
 		consoleSpy.mockRestore();
-		(globalThis as Record<string, unknown>).MediaRecorder = originalMediaRecorder;
+		(globalThis as Record<string, unknown>).MediaRecorder =
+			originalMediaRecorder;
+	});
+});
+
+describe("sanitizeGitUrl", () => {
+	it("returns clean HTTPS URL unchanged", () => {
+		const url = "https://github.com/owner/repo/commit/abc123";
+		expect(sanitizeGitUrl(url)).toBe(url);
+	});
+
+	it("strips user:password@ userinfo", () => {
+		expect(
+			sanitizeGitUrl("https://user:secret@github.com/owner/repo/commit/abc123"),
+		).toBe("https://github.com/owner/repo/commit/abc123");
+	});
+
+	it("strips token-only userinfo (no password)", () => {
+		expect(
+			sanitizeGitUrl("https://token@github.com/owner/repo/commit/abc123"),
+		).toBe("https://github.com/owner/repo/commit/abc123");
+	});
+
+	it("strips GitHub App token userinfo", () => {
+		expect(
+			sanitizeGitUrl(
+				"https://x-access-token:ghs_123@github.com/owner/repo/commit/abc123",
+			),
+		).toBe("https://github.com/owner/repo/commit/abc123");
+	});
+
+	it("preserves URL with port after stripping userinfo", () => {
+		expect(
+			sanitizeGitUrl(
+				"https://user:pass@github.com:8443/owner/repo/commit/abc123",
+			),
+		).toBe("https://github.com:8443/owner/repo/commit/abc123");
+	});
+
+	it("handles empty userinfo (@ with no credentials)", () => {
+		expect(sanitizeGitUrl("https://@github.com/owner/repo/commit/abc123")).toBe(
+			"https://github.com/owner/repo/commit/abc123",
+		);
+	});
+
+	it("does not touch @ in path or query string", () => {
+		const url =
+			"https://github.com/owner/repo/issues/new?body=%40user&user=test%40example.com";
+		expect(sanitizeGitUrl(url)).toBe(url);
+	});
+
+	it("only strips the first userinfo segment (before first slash)", () => {
+		const url =
+			"https://user:pass@github.com/owner/repo/commit/abc?ref=test%40rev";
+		expect(sanitizeGitUrl(url)).toBe(
+			"https://github.com/owner/repo/commit/abc?ref=test%40rev",
+		);
+	});
+});
+
+describe("formatBuildLink", () => {
+	beforeEach(() => {
+		versionMock.gitCommitUrl = CLEAN_COMMIT_URL;
+		versionMock.gitShaShort = "abcdef1";
+	});
+
+	it("renders as markdown link with SHA and commit URL", () => {
+		expect(formatBuildLink()).toBe(`[abcdef1](${CLEAN_COMMIT_URL})`);
+	});
+
+	it("strips credentials from credential-bearing GIT_COMMIT_URL", () => {
+		versionMock.gitCommitUrl =
+			"https://user:secret@github.com/test/repo/commit/abcdef1234567890";
+		const result = formatBuildLink();
+		expect(result).not.toContain("user:secret@");
+		expect(result).not.toContain("secret");
+		expect(result).toBe(`[abcdef1](${CLEAN_COMMIT_URL})`);
+	});
+
+	it("strips GitHub App token credentials", () => {
+		versionMock.gitCommitUrl =
+			"https://x-access-token:ghs_987401_jwt@github.com/test/repo/commit/abcdef1234567890";
+		const result = formatBuildLink();
+		expect(result).not.toContain("x-access-token");
+		expect(result).not.toContain("ghs_987401_jwt");
+		expect(result).toBe(`[abcdef1](${CLEAN_COMMIT_URL})`);
+	});
+
+	it("preserves clean URL without modification", () => {
+		expect(formatBuildLink()).toBe(`[abcdef1](${CLEAN_COMMIT_URL})`);
+	});
+});
+
+const crashMetadata = {
+	route: "/test",
+	userAgent: "TestBrowser/1.0",
+	timestamp: "2025-11-29T12:00:00.000Z",
+	appVersion: "1.0.0",
+	screenWidth: 1920,
+	screenHeight: 1080,
+	devicePixelRatio: 2,
+	deviceMemoryGB: 8,
+	hardwareConcurrency: 8,
+	isOnline: true,
+	connectionType: "4g",
+	displayMode: "browser",
+	isTouchDevice: false,
+	isMobile: false,
+	mediaRecorder: {
+		available: true,
+		isIOSSafari: false,
+		selectedCodec: "video/webm;codecs=vp9",
+		supportedCodecs: ["video/webm;codecs=vp9", "video/webm"],
+	},
+};
+
+describe("buildCrashReportBody", () => {
+	beforeEach(() => {
+		versionMock.gitCommitUrl = CLEAN_COMMIT_URL;
+		versionMock.gitShaShort = "abcdef1";
+	});
+
+	it("includes build link in **Build:** line", () => {
+		const body = buildCrashReportBody(new Error("Test error"), crashMetadata);
+		expect(body).toContain("**Build:** [abcdef1](");
+		expect(body).toContain(CLEAN_COMMIT_URL);
+	});
+
+	it("includes build link in App Version table row", () => {
+		const body = buildCrashReportBody(new Error("Test error"), crashMetadata);
+		expect(body).toContain("| App Version | [abcdef1](");
+		expect(body).toContain(CLEAN_COMMIT_URL);
+	});
+
+	it("does not contain credentials when GIT_COMMIT_URL has userinfo", () => {
+		versionMock.gitCommitUrl =
+			"https://user:secret@github.com/test/repo/commit/abcdef1234567890";
+		const body = buildCrashReportBody(new Error("Boom"), crashMetadata);
+		expect(body).not.toContain("user:secret@");
+		expect(body).not.toContain("secret");
+		expect(body).toContain(CLEAN_COMMIT_URL);
+		expect(body).not.toContain("user:secret");
+	});
+
+	it("does not contain GitHub App token when GIT_COMMIT_URL has one", () => {
+		versionMock.gitCommitUrl =
+			"https://x-access-token:ghs_987401_jwt@github.com/test/repo/commit/abcdef1234567890";
+		const body = buildCrashReportBody(new Error("Boom"), crashMetadata);
+		expect(body).not.toContain("x-access-token");
+		expect(body).not.toContain("ghs_987401_jwt");
+		expect(body).toContain(CLEAN_COMMIT_URL);
+	});
+
+	it("both build link occurrences are sanitized", () => {
+		versionMock.gitCommitUrl =
+			"https://user:secret@github.com/test/repo/commit/abcdef1234567890";
+		const body = buildCrashReportBody(new Error("Boom"), crashMetadata);
+		// Should appear exactly twice (Build line + App Version row) without credentials
+		const cleanLinkCount = (body.match(/\[abcdef1\]\(/g) || []).length;
+		expect(cleanLinkCount).toBe(2);
+		expect(body).not.toContain("user:secret");
+	});
+
+	it("includes error message and stack trace", () => {
+		const error = new Error("Test crash");
+		const body = buildCrashReportBody(error, crashMetadata);
+		expect(body).toContain("**Error:** Test crash");
+		expect(body).toContain("**Stack Trace:**");
+	});
+});
+
+describe("buildDefaultDescription credential stripping", () => {
+	beforeEach(() => {
+		versionMock.gitCommitUrl = CLEAN_COMMIT_URL;
+		versionMock.gitShaShort = "abcdef1";
+	});
+
+	it("does not contain credentials when GIT_COMMIT_URL has userinfo", () => {
+		versionMock.gitCommitUrl =
+			"https://user:secret@github.com/test/repo/commit/abcdef1234567890";
+		const result = buildDefaultDescription(new Date("2025-11-29T12:00:00Z"));
+		expect(result).not.toContain("user:secret@");
+		expect(result).not.toContain("secret");
+		expect(result).toContain(CLEAN_COMMIT_URL);
+	});
+});
+
+describe("buildGitHubIssueUrl credential stripping end-to-end", () => {
+	beforeEach(() => {
+		versionMock.gitCommitUrl = CLEAN_COMMIT_URL;
+		versionMock.gitShaShort = "abcdef1";
+	});
+
+	it("prefilled issue URL body has no credentials when GIT_COMMIT_URL has userinfo", () => {
+		versionMock.gitCommitUrl =
+			"https://user:secret@github.com/test/repo/commit/abcdef1234567890";
+		const body = buildCrashReportBody(new Error("Boom"), crashMetadata);
+		const issueUrl = buildGitHubIssueUrl(
+			"https://github.com/test/repo",
+			"Crash: Boom",
+			body,
+			["bug", "crash"],
+		);
+		const decodedBody = decodeURIComponent(
+			new URL(issueUrl).searchParams.get("body") || "",
+		);
+		expect(decodedBody).not.toContain("user:secret@");
+		expect(decodedBody).not.toContain("secret");
+		expect(decodedBody).toContain(CLEAN_COMMIT_URL);
 	});
 });
