@@ -2,11 +2,21 @@ import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DeviceServiceType } from "../services/DeviceService";
 
-// Mock the virtual PWA module
+// Mock the virtual PWA module with a configurable needRefresh flag so the
+// needRefresh -> updateAvailable -> reload -> updateServiceWorker(true)
+// contract (the one that `registerType: "autoUpdate"` silently disabled) can
+// be asserted. Tests flip `pwaMock.needRefresh` to simulate an available update.
+const { pwaMock } = vi.hoisted(() => ({
+	pwaMock: {
+		needRefresh: false,
+		updateServiceWorker: vi.fn(),
+	},
+}));
+
 vi.mock("virtual:pwa-register/react", () => ({
 	useRegisterSW: () => ({
-		needRefresh: [false],
-		updateServiceWorker: vi.fn(),
+		needRefresh: [pwaMock.needRefresh],
+		updateServiceWorker: pwaMock.updateServiceWorker,
 	}),
 }));
 
@@ -47,6 +57,7 @@ function createMockService(
 describe("useVersionCheck", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		pwaMock.needRefresh = false;
 	});
 
 	it("initializes lastCheckTime from storage", () => {
@@ -118,5 +129,36 @@ describe("useVersionCheck", () => {
 		const { result } = renderHook(() => useVersionCheck(service));
 
 		expect(result.current.isChecking).toBe(false);
+	});
+
+	describe("update notification contract (prompt mode)", () => {
+		it("exposes needRefresh as updateAvailable when an update is available", () => {
+			pwaMock.needRefresh = true;
+			const service = createMockService();
+
+			const { result } = renderHook(() => useVersionCheck(service));
+
+			expect(result.current.updateAvailable).toBe(true);
+		});
+
+		it("exposes updateAvailable as false when no update is available", () => {
+			pwaMock.needRefresh = false;
+			const service = createMockService();
+
+			const { result } = renderHook(() => useVersionCheck(service));
+
+			expect(result.current.updateAvailable).toBe(false);
+		});
+
+		it("reload calls updateServiceWorker(true) to send skipWaiting", () => {
+			pwaMock.needRefresh = true;
+			const service = createMockService();
+
+			const { result } = renderHook(() => useVersionCheck(service));
+
+			result.current.reload();
+
+			expect(pwaMock.updateServiceWorker).toHaveBeenCalledWith(true);
+		});
 	});
 });
