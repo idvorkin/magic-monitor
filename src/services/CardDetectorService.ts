@@ -63,7 +63,15 @@ function computeIoU(a: BoundingBox, b: BoundingBox): number {
 }
 
 /**
- * Non-max suppression: remove overlapping detections, keep highest confidence.
+ * Per-card non-max suppression: remove duplicate detections of the SAME card
+ * (same rank+suit) that overlap above the IoU threshold, keeping the highest
+ * confidence. Detections of DIFFERENT cards are never suppressed, even when
+ * their boxes overlap — fanned/adjacent cards in the same frame must survive.
+ *
+ * This is the only Non-Max Suppression in the pipeline: the deployed YOLO26
+ * model emits a score-based TopK(300) output (`nms: False` in its metadata,
+ * no NMS node in its ONNX graph), so this call is what deduplicates same-card
+ * predictions, not "post-NMS housekeeping".
  */
 export function nms(
 	detections: CardDetection[],
@@ -74,7 +82,10 @@ export function nms(
 
 	for (const det of sorted) {
 		const dominated = kept.some(
-			(k) => computeIoU(k.bbox, det.bbox) > iouThreshold,
+			(k) =>
+				k.card.rank === det.card.rank &&
+				k.card.suit === det.card.suit &&
+				computeIoU(k.bbox, det.bbox) > iouThreshold,
 		);
 		if (!dominated) {
 			kept.push(det);
@@ -93,13 +104,17 @@ export interface LetterboxInfo {
 }
 
 /**
- * Parse YOLO26n post-NMS output tensor into CardDetection[].
+ * Parse YOLO26 output tensor into CardDetection[].
  *
  * Output shape: [1, 300, 6] where each detection is:
  *   [x1, y1, x2, y2, confidence, class_id]
  * Coordinates are in pixel space relative to the model input,
  * including letterbox padding. We undo the padding so bbox coords
  * are normalized to the original video frame (0-1).
+ *
+ * The model emits a score-based TopK(300) selection — it has no built-in
+ * NMS (`nms: False` in its metadata, no NMS node in its ONNX graph) — so
+ * the trailing `nms()` is the pipeline's only overlap suppression.
  */
 export function parseYoloOutput(
 	outputData: Float32Array,
@@ -141,7 +156,10 @@ export function parseYoloOutput(
 		});
 	}
 
-	// Output is already post-NMS, but filter any remaining overlaps
+	// The model has no built-in NMS (its output is score-based TopK(300)),
+	// so this per-card NMS is the pipeline's only overlap suppression: it
+	// deduplicates same-card predictions while preserving distinct cards
+	// whose boxes overlap.
 	return nms(detections);
 }
 
@@ -305,7 +323,7 @@ class CardDetectorServiceImpl {
 		const output = results[outputName];
 		const outputData = output.data as Float32Array;
 
-		// YOLO26n post-NMS output: [1, 300, 6]
+		// YOLO26 output: [1, 300, 6] (score-based TopK, no built-in NMS)
 		const numDetections = output.dims[1];
 		const letterbox: LetterboxInfo = { offsetX, offsetY, scaledW, scaledH };
 
