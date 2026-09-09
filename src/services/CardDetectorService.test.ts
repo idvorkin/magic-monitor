@@ -356,7 +356,7 @@ describe("nms", () => {
 		expect(result).toHaveLength(2);
 	});
 
-	it("removes overlapping detection with lower confidence", () => {
+	it("removes duplicate same-card detection with lower confidence", () => {
 		const detections: CardDetection[] = [
 			{
 				card: { rank: "A", suit: "\u2660" },
@@ -365,8 +365,8 @@ describe("nms", () => {
 				confidence: 0.9,
 			},
 			{
-				card: { rank: "K", suit: "\u2665" },
-				label: "K\u2665",
+				card: { rank: "A", suit: "\u2660" },
+				label: "A\u2660",
 				bbox: { x: 0.5, y: 0.5, width: 0.2, height: 0.2 },
 				confidence: 0.7,
 			},
@@ -375,6 +375,52 @@ describe("nms", () => {
 		const result = nms(detections);
 		expect(result).toHaveLength(1);
 		expect(result[0].label).toBe("A\u2660");
+		expect(result[0].confidence).toBeCloseTo(0.9);
+	});
+
+	it("keeps distinct cards with moderate overlap (IoU in [0.5, 1.0))", () => {
+		// The bug case: two different cards whose boxes overlap above
+		// NMS_IOU_THRESHOLD but are not identical. Class-agnostic NMS would drop
+		// the lower-confidence card; per-card NMS keeps both.
+		const detections: CardDetection[] = [
+			{
+				card: { rank: "A", suit: "\u2660" },
+				label: "A\u2660",
+				bbox: { x: 0.3, y: 0.3, width: 0.2, height: 0.2 },
+				confidence: 0.95,
+			},
+			{
+				card: { rank: "K", suit: "\u2665" },
+				label: "K\u2665",
+				bbox: { x: 0.32, y: 0.32, width: 0.2, height: 0.2 },
+				confidence: 0.8,
+			},
+		];
+
+		const result = nms(detections);
+		expect(result).toHaveLength(2);
+		expect(result.map((d) => d.label).sort()).toEqual(["A\u2660", "K\u2665"]);
+	});
+
+	it("keeps same-card detections that do not overlap", () => {
+		// Same card, non-overlapping boxes (two instances on screen) both survive.
+		const detections: CardDetection[] = [
+			{
+				card: { rank: "A", suit: "\u2660" },
+				label: "A\u2660",
+				bbox: { x: 0.2, y: 0.2, width: 0.1, height: 0.1 },
+				confidence: 0.9,
+			},
+			{
+				card: { rank: "A", suit: "\u2660" },
+				label: "A\u2660",
+				bbox: { x: 0.8, y: 0.8, width: 0.1, height: 0.1 },
+				confidence: 0.8,
+			},
+		];
+
+		const result = nms(detections);
+		expect(result).toHaveLength(2);
 	});
 
 	it("returns empty array for empty input", () => {
@@ -512,5 +558,33 @@ describe("parseYoloOutput", () => {
 		const result = parseYoloOutput(data, 3, 0.5, noLetterbox);
 		expect(result).toHaveLength(2);
 		expect(result.map((d) => d.label).sort()).toEqual(["7\u2660", "8\u2660"]);
+	});
+
+	it("keeps distinct overlapping cards (the only NMS in the pipeline is per-card)", () => {
+		// The bug reproduction: two DIFFERENT cards whose boxes overlap with IoU
+		// ≈ 0.68 (> NMS_IOU_THRESHOLD 0.5, < 1.0). Class-agnostic nms() dropped
+		// the lower-confidence card; per-card nms() keeps both.
+		// A♠ (class 39) center (0.30, 0.30), K♥ (class 46) center (0.32, 0.32),
+		// both 0.2×0.2. Pixel coords with noLetterbox (scaledW=scaledH=416).
+		const data = new Float32Array(2 * 6);
+		// det 0: A♠ (class 39), conf 0.95
+		data[0] = 83.2;
+		data[1] = 83.2;
+		data[2] = 166.4;
+		data[3] = 166.4;
+		data[4] = 0.95;
+		data[5] = 39;
+		// det 1: K♥ (class 46), conf 0.80
+		data[6] = 91.52;
+		data[7] = 91.52;
+		data[8] = 174.72;
+		data[9] = 174.72;
+		data[10] = 0.8;
+		data[11] = 46;
+
+		const result = parseYoloOutput(data, 2, 0.5, noLetterbox);
+
+		expect(result).toHaveLength(2);
+		expect(result.map((d) => d.label).sort()).toEqual(["A\u2660", "K\u2665"]);
 	});
 });
