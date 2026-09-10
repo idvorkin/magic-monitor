@@ -308,8 +308,12 @@ export class SessionRecorderMachine {
 			return;
 		}
 
-		// Everything ready and nothing in flight? Start!
+		// Everything ready and nothing in flight? Start - unless the 3-strike
+		// park is in effect: the recorder is broken, so re-arming here would
+		// churn MediaRecorder instances on every readiness wiggle. Only
+		// enable() (which zeroes consecutiveRecorderFailures) may resume.
 		if (
+			this.consecutiveRecorderFailures < 3 &&
 			this.state.type !== "recording" &&
 			(this.state.type !== "stopping" || options.fromStop)
 		) {

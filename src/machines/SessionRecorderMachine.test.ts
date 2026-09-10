@@ -452,6 +452,34 @@ describe("SessionRecorderMachine", () => {
 			expect(machine.getState().type).toBe("recording");
 		});
 
+		it("a readyState dip+recovery does not un-stick the 3-strike park", async () => {
+			startRecordingMachine();
+			await machine.recorderFailed(null);
+			await machine.recorderFailed(null);
+			await machine.recorderFailed(null);
+			expect(machine.getState()).toEqual({ type: "idle" });
+			expect(machine.getNotRecordingReason()).toBe("recorder-error");
+
+			// 3 starts so far: the initial start + 2 retries (the 3rd strike
+			// parks instead of retrying).
+			expect(callbacks.onStartRecording).toHaveBeenCalledTimes(3);
+
+			await machine.videoNotReady(); // readyState transiently drops
+			machine.videoIsReady(); // ...and recovers
+
+			expect(machine.getState().type).toBe("idle");
+			expect(machine.getNotRecordingReason()).toBe("recorder-error");
+			// No 4th MediaRecorder was created against the broken encoder.
+			expect(callbacks.onStartRecording).toHaveBeenCalledTimes(3);
+
+			// Storage re-init is idempotent once ready: it must not un-stick
+			// the park either.
+			machine.storageInitialized();
+			expect(machine.getState().type).toBe("idle");
+			expect(machine.getNotRecordingReason()).toBe("recorder-error");
+			expect(callbacks.onStartRecording).toHaveBeenCalledTimes(3);
+		});
+
 		it("ignores failure reports when not recording", async () => {
 			await machine.recorderFailed(null);
 			expect(callbacks.onStopBlockTimer).not.toHaveBeenCalled();
