@@ -68,13 +68,6 @@ export function useBugReporter() {
 					isMobileDevice: () => DeviceService.isMobileDevice(),
 				},
 			);
-			const body = buildIssueBody(data, metadata, {
-				isMobile,
-				hasScreenshot: !!data.screenshot,
-			});
-
-			const issueUrl = buildGitHubIssueUrl(GITHUB_REPO_URL, data.title, body);
-
 			// Desktop: copy screenshot to clipboard if available
 			let hasScreenshotOnClipboard = false;
 			if (data.screenshot && !isMobile) {
@@ -82,6 +75,13 @@ export function useBugReporter() {
 					data.screenshot,
 				);
 			}
+
+			const body = buildIssueBody(data, metadata, {
+				isMobile,
+				hasScreenshot: hasScreenshotOnClipboard,
+			});
+
+			const issueUrl = buildGitHubIssueUrl(GITHUB_REPO_URL, data.title, body);
 
 			if (!hasScreenshotOnClipboard) {
 				// Fallback: copy text if no screenshot or on mobile
