@@ -142,9 +142,25 @@ export function useThinkOfACard(options: UseThinkOfACardOptions = {}) {
 
 		return () => {
 			cancelAnimationFrame(rafId);
-			gestureHoldRef.current?.reset();
+			// No reset here: this cleanup fires on every landmarksRef identity
+			// change (smart-zoom toggle), and wiping the hold then discards
+			// in-progress hold time even though the hand never left the frame.
+			// The grace window (GRACE_MS) bridges the brief cold-start gap
+			// while the newly-enabled producer emits its first frame. The
+			// stale-hold guard lives in the gestureEnabled effect below.
 		};
 	}, [gestureEnabled, landmarksRef]);
+
+	// Stale-hold guard: clear accumulated hold state only when the watcher
+	// leaves live mode (gestureEnabled going false). useSmartZoom runs with
+	// enabled: isSmartZoom, not appState, so debugLandmarksRef stays
+	// populated across a live-mode exit — without this reset, a stale
+	// holdStart would make update(true, now) fire on the first frame of
+	// re-entry with no fresh 600ms hold. Keyed to gestureEnabled alone so a
+	// landmarksRef swap (smart-zoom toggle) does not trigger it.
+	useEffect(() => {
+		if (!gestureEnabled) gestureHoldRef.current?.reset();
+	}, [gestureEnabled]);
 
 	return {
 		state,
