@@ -502,5 +502,21 @@ describe("SessionRecorderMachine", () => {
 			machine.enable();
 			expect(machine.getNotRecordingReason()).toBe("storage-error");
 		});
+
+		it("clears storage-error when storageInitialized() fires after storageInitFailed()", () => {
+			machine.enable();
+			machine.videoIsReady();
+			machine.storageInitFailed();
+			expect(machine.getNotRecordingReason()).toBe("storage-error");
+			expect(machine.isRecording()).toBe(false);
+
+			// Recovery: storage comes back online. The hook's bridge effect
+			// reaches this path after a successful refreshSessions reconciles
+			// initFailed/isInitialized, so this contract must hold.
+			machine.storageInitialized();
+
+			expect(machine.isRecording()).toBe(true);
+			expect(machine.getNotRecordingReason()).toBeNull();
+		});
 	});
 });

@@ -69,8 +69,17 @@ export function useSessionList({
 			const saved = await sessionStorageService.getSavedSessions();
 			setRecentSessions(recent);
 			setSavedSessions(saved);
-			// Clear error on successful refresh
+			// A successful refresh proves storage is reachable, so reconcile
+			// the init-failure flags: this is the only recovery path after a
+			// transient mount-time init failure (the init effect's dependency
+			// is the stable storage singleton, so it never re-runs). Clearing
+			// initFailed and setting isInitialized re-fires the recorder's
+			// storage bridge effect with storageInitialized(), which clears
+			// the machine's sticky storageFailed lockout. These are no-ops
+			// (same value) when storage had already initialized normally.
 			setError(null);
+			setInitFailed(false);
+			setIsInitialized(true);
 		} catch (err) {
 			console.error("Failed to refresh sessions:", err);
 			setError("Failed to load sessions");
