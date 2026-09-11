@@ -80,6 +80,35 @@ describe("useZoomPan", () => {
 			// maxPan at zoom 2 = (1 - 1/2) / 2 = 0.25
 			expect(result.current.pan.x).toBeCloseTo(0.25, 5);
 		});
+
+		it("should call onZoomChange callback", () => {
+			const { videoRef, containerRef } = createMockRefs();
+			const onZoomChange = vi.fn();
+			const { result } = renderHook(() =>
+				useZoomPan({ videoRef, containerRef, onZoomChange }),
+			);
+
+			act(() => {
+				result.current.setZoom(2);
+			});
+
+			expect(onZoomChange).toHaveBeenCalled();
+		});
+
+		it("should not call onZoomChange when not provided", () => {
+			const { videoRef, containerRef } = createMockRefs();
+			const { result } = renderHook(() =>
+				useZoomPan({ videoRef, containerRef }),
+			);
+
+			expect(() => {
+				act(() => {
+					result.current.setZoom(2);
+				});
+			}).not.toThrow();
+
+			expect(result.current.zoom).toBe(2);
+		});
 	});
 
 	describe("setPan", () => {
