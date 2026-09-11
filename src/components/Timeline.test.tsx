@@ -427,6 +427,132 @@ describe("Timeline", () => {
 		});
 	});
 
+	describe("thumbnail strip gap/padding scrub guard (regression for merge 33555bc)", () => {
+		const mockThumbnails: SessionThumbnail[] = [
+			{ time: 0, dataUrl: "data:image/jpeg;base64,thumb0" },
+			{ time: 5, dataUrl: "data:image/jpeg;base64,thumb5" },
+			{ time: 10, dataUrl: "data:image/jpeg;base64,thumb10" },
+		];
+
+		const mockTrackRect = () => ({
+			left: 0,
+			width: 1000,
+			top: 0,
+			right: 1000,
+			bottom: 20,
+			height: 20,
+			x: 0,
+			y: 0,
+			toJSON: () => ({}),
+		});
+
+		it("pointerdown on the strip's gap/padding area does not seek", () => {
+			const { container } = render(
+				<Timeline
+					currentTime={0}
+					duration={10}
+					inPoint={null}
+					outPoint={null}
+					onSeek={mockOnSeek}
+					thumbnails={mockThumbnails}
+				/>,
+			);
+
+			const track = getTrack(container);
+			track.getBoundingClientRect = vi.fn().mockReturnValue(mockTrackRect());
+
+			// The strip's background (gap/padding/scroll region), NOT a thumbnail button.
+			// fireEvent.pointerDown targets the strip div itself; its child buttons
+			// are not the event target here.
+			const strip = container.querySelector(".overflow-x-auto") as HTMLElement;
+			expect(strip).toBeTruthy();
+
+			mockOnSeek.mockClear();
+			fireEvent.pointerDown(strip, { clientX: 300, pointerId: 1 });
+
+			// 300 / 1000 * 10 = 3 — the bug would have called onSeek(3).
+			expect(mockOnSeek).not.toHaveBeenCalled();
+		});
+
+		it("a drag begun in the strip gap is not hijacked into continuous scrubbing", () => {
+			const { container } = render(
+				<Timeline
+					currentTime={0}
+					duration={10}
+					inPoint={null}
+					outPoint={null}
+					onSeek={mockOnSeek}
+					thumbnails={mockThumbnails}
+				/>,
+			);
+
+			const track = getTrack(container);
+			track.getBoundingClientRect = vi.fn().mockReturnValue(mockTrackRect());
+
+			const timelineContainer = getContainer(container);
+			const strip = container.querySelector(".overflow-x-auto") as HTMLElement;
+
+			mockOnSeek.mockClear();
+			fireEvent.pointerDown(strip, { clientX: 300, pointerId: 1 });
+			fireEvent.pointerMove(timelineContainer, { clientX: 500, pointerId: 1 });
+			fireEvent.pointerMove(timelineContainer, { clientX: 700, pointerId: 1 });
+			fireEvent.pointerUp(timelineContainer, { clientX: 700, pointerId: 1 });
+
+			// No seek on pointerdown and no seeks during the drag.
+			expect(mockOnSeek).not.toHaveBeenCalled();
+		});
+
+		it("seeking on the track still works after the strip exclusion (no regression)", () => {
+			const { container } = render(
+				<Timeline
+					currentTime={0}
+					duration={10}
+					inPoint={null}
+					outPoint={null}
+					onSeek={mockOnSeek}
+					thumbnails={mockThumbnails}
+				/>,
+			);
+
+			const track = getTrack(container);
+			track.getBoundingClientRect = vi.fn().mockReturnValue(mockTrackRect());
+
+			mockOnSeek.mockClear();
+			fireEvent.pointerDown(track, { clientX: 500, pointerId: 1 });
+			expect(mockOnSeek).toHaveBeenCalledTimes(1);
+			expect(mockOnSeek).toHaveBeenCalledWith(5); // 500 / 1000 * 10
+
+			fireEvent.pointerMove(track, { clientX: 750, pointerId: 1 });
+			expect(mockOnSeek).toHaveBeenLastCalledWith(7.5); // 750 / 1000 * 10
+		});
+
+		it("when no thumbnails are rendered, pointerdown on the container still seeks (no regression)", () => {
+			const { container } = render(
+				<Timeline
+					currentTime={0}
+					duration={10}
+					inPoint={null}
+					outPoint={null}
+					onSeek={mockOnSeek}
+				/>,
+			);
+
+			const track = getTrack(container);
+			track.getBoundingClientRect = vi.fn().mockReturnValue(mockTrackRect());
+
+			// No strip exists in this configuration.
+			expect(container.querySelector(".overflow-x-auto")).toBeNull();
+
+			mockOnSeek.mockClear();
+			fireEvent.pointerDown(getContainer(container), {
+				clientX: 400,
+				pointerId: 1,
+			});
+			expect(mockOnSeek).toHaveBeenCalledTimes(1);
+			expect(mockOnSeek).toHaveBeenCalledWith(4); // 400 / 1000 * 10
+		});
+	});
+
 	describe("in/out points (trim markers)", () => {
 		it("renders in point marker", () => {
 			const { container } = render(

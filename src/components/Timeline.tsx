@@ -41,7 +41,9 @@ export function Timeline({
 	// Width ranges from 48px to 200px, height maintains 16:9 aspect
 	const thumbWidth = Math.round(48 + (thumbnailSize / 100) * 152);
 	const thumbHeight = Math.round(thumbWidth * (9 / 16));
-	// containerRef is for the entire draggable area (including thumbnails)
+	// containerRef is for the draggable scrubber surface (the track and any
+	// non-strip padding). The thumbnail strip is a separate scrollable region
+	// and is excluded from scrubbing (see handlePointerDown).
 	// trackRef is for the visual progress bar (used for position calculations)
 	const containerRef = useRef<HTMLDivElement>(null);
 	const trackRef = useRef<HTMLDivElement>(null);
@@ -69,12 +71,21 @@ export function Timeline({
 		[duration],
 	);
 
-	// Handle click/drag on timeline (entire area including thumbnails)
+	// Handle click/drag on the scrubber track (NOT the thumbnail strip)
 	const handlePointerDown = useCallback(
 		(e: React.PointerEvent) => {
 			// Don't call preventDefault - causes issues with passive event listeners
 			const container = containerRef.current;
 			if (!container || disabled) return;
+
+			// Ignore events on the thumbnail strip (let it handle its own scrolling).
+			// The strip's gap/padding/scroll region is a separate interaction surface
+			// from the scrubber track; without this guard a pointerdown/drag that
+			// starts in the strip bubbles here, gets pointer-captured by the
+			// container, and continuously scrubs the video instead of scrolling.
+			if (thumbStripRef.current?.contains(e.target as Node)) {
+				return;
+			}
 
 			// Store the pointerId for use in handlers (to ensure we capture/release the same pointer)
 			const pointerId = e.pointerId;
