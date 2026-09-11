@@ -43,6 +43,16 @@ interface UseThinkOfACardOptions {
 	 * Omit (or leave empty) and only the key/button triggers work.
 	 */
 	landmarksRef?: React.RefObject<HandLandmark[][]>;
+	/**
+	 * Dimensions of the frame MediaPipe normalized its landmarks against —
+	 * the processing canvas from `useHandLandmarks`/`useSmartZoom`. Read each
+	 * tick and reduced to `aspect = width / height` so the V-sign spread angle
+	 * is computed in an isotropic space; without this the same V would
+	 * classify differently depending on the camera's tilt/aspect. Omit and
+	 * the angle assumes a square frame (aspect 1), which is correct for the
+	 * synthetic fixtures but wrong for any non-square production frame.
+	 */
+	processingResRef?: React.RefObject<{ width: number; height: number }>;
 	/** Watch for the V sign. False while replaying, or when hand tracking is off. */
 	gestureEnabled?: boolean;
 }
@@ -55,7 +65,7 @@ interface UseThinkOfACardOptions {
  * watcher runs per frame, and it writes to refs.
  */
 export function useThinkOfACard(options: UseThinkOfACardOptions = {}) {
-	const { landmarksRef, gestureEnabled = false } = options;
+	const { landmarksRef, processingResRef, gestureEnabled = false } = options;
 
 	const [state, setState] = useState<ThinkOfACardState>({ type: "idle" });
 
@@ -124,12 +134,19 @@ export function useThinkOfACard(options: UseThinkOfACardOptions = {}) {
 		const watch = () => {
 			const machine = machineRef.current;
 			const hold = gestureHoldRef.current;
+			// Reduce the processing frame to its aspect ratio. MediaPipe
+			// normalizes x by width and y by height, so the spread angle is
+			// only tilt-invariant once y is rescaled to the x/z (per-width)
+			// units — see `fingerSpreadDegrees`. A square or unknown frame
+			// (ref absent, or height not yet measured) fall back to aspect 1.
+			const res = processingResRef?.current;
+			const aspect = res && res.height > 0 ? res.width / res.height : 1;
 			// A round already running counts as "no gesture" so the hold clock
 			// restarts cleanly once it ends.
 			const showingV =
 				machine !== null &&
 				!machine.isBusy() &&
-				anyHandIsVSign(landmarksRef.current);
+				anyHandIsVSign(landmarksRef.current, aspect);
 
 			if (hold?.update(showingV, performance.now())) {
 				machine?.start("gesture");
@@ -144,7 +161,7 @@ export function useThinkOfACard(options: UseThinkOfACardOptions = {}) {
 			cancelAnimationFrame(rafId);
 			gestureHoldRef.current?.reset();
 		};
-	}, [gestureEnabled, landmarksRef]);
+	}, [gestureEnabled, landmarksRef, processingResRef]);
 
 	return {
 		state,

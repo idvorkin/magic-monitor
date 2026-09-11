@@ -30,7 +30,9 @@ export const HAND_LANDMARK_COUNT = 21;
  *
  * Everything here is scale- and rotation-invariant: distances are measured
  * from the wrist as ratios, and spread is an angle, so a hand near or far
- * from the camera and held at any tilt classifies the same.
+ * from the camera and held at any tilt classifies the same — provided the
+ * caller passes the frame `aspect` (width / height) so the angle can be
+ * computed in an isotropic space. See `fingerSpreadDegrees`.
  *
  * How these were chosen: MediaPipe's normalized landmarks put a fully
  * extended fingertip roughly twice as far from the wrist as its PIP joint,
@@ -56,6 +58,17 @@ export const V_SIGN_THRESHOLDS = {
 	MIN_SPREAD_DEG: 15,
 } as const;
 
+/**
+ * Plain Euclidean distance over normalized landmarks.
+ *
+ * Deliberately NOT aspect-corrected: its only caller (`fingerExtensionRatio`)
+ * takes a ratio of two distances along the same finger, so the per-axis
+ * anisotropy of MediaPipe's normalization (x/z per-width, y per-height)
+ * cancels in the ratio. Correcting `dy` here would shift the curled/extended
+ * thresholds for fingers whose tip and PIP fold in different directions,
+ * with no benefit. The angle gate (`fingerSpreadDegrees`) is where the
+ * anisotropy fails to cancel, and that is where correction is applied.
+ */
 function distance(a: HandLandmark, b: HandLandmark): number {
 	const dx = a.x - b.x;
 	const dy = a.y - b.y;
@@ -74,20 +87,38 @@ export function fingerExtensionRatio(
 	return distance(landmarks[finger.tip], wrist) / pipDistance;
 }
 
-/** Angle in degrees between two finger direction vectors (MCP → TIP). */
+/**
+ * Angle in degrees between two finger direction vectors (MCP → TIP).
+ *
+ * MediaPipe's `NormalizedLandmark` is NOT isotropic: `x` and `z` are
+ * per-frame-width, while `y` is per-frame-height (per the
+ * `@mediapipe/tasks-vision` contract). Computing the angle directly on
+ * `(x, y, z)` would mix those units, so a hand at one tilt would measure a
+ * different spread than the same hand rotated 90° — breaking the
+ * rotation-invariance the V-sign contract depends on.
+ *
+ * `aspect` (frame width / height) brings `y` onto the `x`/`z` scale by
+ * dividing `dy` by `aspect`. With all three axes in per-frame-width units
+ * the angle becomes genuinely tilt-invariant. Pass the production frame
+ * aspect from the camera/processing config; the default of `1` (a square
+ * frame) leaves the math unchanged, so synthetic fixtures built in an
+ * isotropic `[0,1]²` space behave exactly as before.
+ */
 export function fingerSpreadDegrees(
 	landmarks: HandLandmark[],
 	a: { mcp: number; tip: number },
 	b: { mcp: number; tip: number },
+	aspect = 1,
 ): number {
+	const invAspect = 1 / aspect;
 	const va = {
 		x: landmarks[a.tip].x - landmarks[a.mcp].x,
-		y: landmarks[a.tip].y - landmarks[a.mcp].y,
+		y: (landmarks[a.tip].y - landmarks[a.mcp].y) * invAspect,
 		z: landmarks[a.tip].z - landmarks[a.mcp].z,
 	};
 	const vb = {
 		x: landmarks[b.tip].x - landmarks[b.mcp].x,
-		y: landmarks[b.tip].y - landmarks[b.mcp].y,
+		y: (landmarks[b.tip].y - landmarks[b.mcp].y) * invAspect,
 		z: landmarks[b.tip].z - landmarks[b.mcp].z,
 	};
 
@@ -104,8 +135,15 @@ export function fingerSpreadDegrees(
  * True when this hand is holding a V: index and middle extended and spread
  * apart, ring and pinky curled. The thumb is deliberately unconstrained —
  * people tuck it or stick it out and both read as a V.
+ *
+ * `aspect` (frame width / height) is forwarded to `fingerSpreadDegrees` so
+ * the spread angle is computed in an isotropic space; without it the same
+ * V would classify differently depending on the camera's tilt/aspect.
  */
-export function isVSign(landmarks: HandLandmark[] | undefined | null): boolean {
+export function isVSign(
+	landmarks: HandLandmark[] | undefined | null,
+	aspect = 1,
+): boolean {
 	if (!landmarks || landmarks.length < HAND_LANDMARK_COUNT) return false;
 
 	const { EXTENDED_TIP_PIP_RATIO, CURLED_TIP_PIP_RATIO, MIN_SPREAD_DEG } =
@@ -123,11 +161,16 @@ export function isVSign(landmarks: HandLandmark[] | undefined | null): boolean {
 		fingerExtensionRatio(landmarks, PINKY) <= CURLED_TIP_PIP_RATIO;
 	if (!ringCurled || !pinkyCurled) return false;
 
-	return fingerSpreadDegrees(landmarks, INDEX, MIDDLE) >= MIN_SPREAD_DEG;
+	return (
+		fingerSpreadDegrees(landmarks, INDEX, MIDDLE, aspect) >= MIN_SPREAD_DEG
+	);
 }
 
 /** True when either hand in the frame is holding a V. */
-export function anyHandIsVSign(hands: HandLandmark[][] | undefined): boolean {
+export function anyHandIsVSign(
+	hands: HandLandmark[][] | undefined,
+	aspect = 1,
+): boolean {
 	if (!hands || hands.length === 0) return false;
-	return hands.some(isVSign);
+	return hands.some((hand) => isVSign(hand, aspect));
 }

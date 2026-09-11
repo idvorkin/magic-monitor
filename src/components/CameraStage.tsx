@@ -171,6 +171,7 @@ export function CameraStage() {
 	// button always work.
 	const thinkOfACard = useThinkOfACard({
 		landmarksRef: handLandmarksRef,
+		processingResRef: handProcessingResRef,
 		gestureEnabled: appState === "live",
 	});
 	const { toggle: toggleThinkOfACard, dismiss: dismissThinkOfACard } =
