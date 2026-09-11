@@ -644,5 +644,89 @@ describe("useReplayPlayer", () => {
 			expect(video.currentTime).toBe(9);
 			expect(result.current.currentTime).toBe(9);
 		});
+
+		it("replays a pending seek when durationchange resolves the duration", async () => {
+			const { result } = renderHook(() =>
+				useReplayPlayer({
+					sessionStorageService: mockStorage,
+					shareService: mockShare,
+				}),
+			);
+
+			await act(async () => {
+				await result.current.loadSession("test-session-id");
+			});
+
+			const video = mountVideo(result, Number.POSITIVE_INFINITY);
+			act(() => {
+				video.dispatchEvent(new Event("loadedmetadata"));
+			});
+
+			expect(result.current.isReady).toBe(true);
+			expect(result.current.duration).toBe(0);
+
+			// Finite seek while duration is still Infinity — parks in
+			// pendingSeekRef. 10s is a realistic thumbnail time within the
+			// 12.5s clip.
+			act(() => {
+				result.current.seek(10);
+			});
+
+			expect(video.currentTime).toBe(0);
+
+			Object.defineProperty(video, "duration", {
+				value: 12.5,
+				writable: true,
+			});
+			act(() => {
+				video.dispatchEvent(new Event("durationchange"));
+			});
+
+			expect(result.current.duration).toBe(12.5);
+			expect(video.currentTime).toBe(10);
+			expect(result.current.currentTime).toBe(10);
+		});
+
+		it("applies a pending seek exactly once when duration is finite at loadedmetadata", async () => {
+			const { result } = renderHook(() =>
+				useReplayPlayer({
+					sessionStorageService: mockStorage,
+					shareService: mockShare,
+				}),
+			);
+
+			await act(async () => {
+				await result.current.loadSession("test-session-id");
+			});
+
+			// Seek before loadedmetadata — parks in pendingSeekRef because
+			// isReady is false and session is non-null.
+			act(() => {
+				result.current.seek(5);
+			});
+
+			expect(result.current.isReady).toBe(false);
+
+			const video = mountVideo(result, 12.5);
+			act(() => {
+				video.dispatchEvent(new Event("loadedmetadata"));
+			});
+
+			expect(result.current.isReady).toBe(true);
+			expect(result.current.duration).toBe(12.5);
+			expect(video.currentTime).toBe(5);
+			expect(result.current.currentTime).toBe(5);
+
+			// A later durationchange must not double-apply the cleared seek.
+			Object.defineProperty(video, "duration", {
+				value: 12.5,
+				writable: true,
+			});
+			act(() => {
+				video.dispatchEvent(new Event("durationchange"));
+			});
+
+			expect(video.currentTime).toBe(5);
+		});
 	});
 });

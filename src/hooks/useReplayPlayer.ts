@@ -426,6 +426,23 @@ export function useReplayPlayer({
 			const reported = videoElement.duration;
 			if (Number.isFinite(reported) && reported > 0) {
 				setDuration(reported);
+
+				// loadedmetadata already ran against an unresolved duration and
+				// will not re-fire, so replay a seek parked during the Infinity
+				// window here. Clearing pendingSeekRef makes handleLoadedMetadata's
+				// own block a no-op, so the seek is applied exactly once.
+				if (
+					pendingSeekRef.current &&
+					pendingSeekRef.current.requestId === loadRequestIdRef.current
+				) {
+					const clampedTime = Math.max(
+						0,
+						Math.min(pendingSeekRef.current.time, videoElement.duration),
+					);
+					videoElement.currentTime = clampedTime;
+					setCurrentTime(clampedTime);
+					pendingSeekRef.current = null;
+				}
 			}
 		};
 
